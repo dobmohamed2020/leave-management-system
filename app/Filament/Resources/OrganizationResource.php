@@ -47,7 +47,11 @@ class OrganizationResource extends Resource
             Forms\Components\TextInput::make('code')
                 ->label('الكود')
                 ->required()
-                ->maxLength(50),
+                ->maxLength(30)
+                ->unique(Organization::class, 'code', ignoreRecord: true)
+                ->validationMessages([
+                    'unique' => 'هذا الكود مستخدم بالفعل.',
+                ]),
 
             Forms\Components\Select::make('type')
                 ->label('النوع')
@@ -56,19 +60,44 @@ class OrganizationResource extends Resource
                         ->mapWithKeys(fn(OrganizationType $t) => [$t->value => $t->label()])
                         ->toArray()
                 )
+                ->default(OrganizationType::SCHOOL->value)
+                ->reactive()
                 ->required(),
 
             Forms\Components\Select::make('parent_id')
                 ->label('الجهة الأم')
-                ->options(
-                    Organization::withoutGlobalScopes()
-                        ->orderBy('name')
-                        ->pluck('name', 'id')
-                        ->toArray()
-                )
+                ->options(function (Forms\Get $get, ?Organization $record) {
+                    $type = $get('type');
+                    $query = Organization::withoutGlobalScopes()->orderBy('name');
+
+                    if ($record) {
+                        $subtreeIds = $record->subtreeIds();
+                        $query->whereNotIn('id', $subtreeIds);
+                    }
+
+                    if ($type === OrganizationType::SCHOOL->value) {
+                        $query->whereIn('type', [
+                            OrganizationType::ADMINISTRATION->value,
+                            OrganizationType::DIRECTORATE->value,
+                        ]);
+                    } elseif ($type === OrganizationType::ADMINISTRATION->value) {
+                        $query->where('type', OrganizationType::DIRECTORATE->value);
+                    }
+
+                    return $query->pluck('name', 'id')->toArray();
+                })
                 ->searchable()
-                ->nullable()
-                ->placeholder('— لا يوجد (مستوى أعلى) —'),
+                ->required(fn (Forms\Get $get) => in_array($get('type'), [
+                    OrganizationType::SCHOOL->value,
+                    OrganizationType::ADMINISTRATION->value,
+                ]))
+                ->visible(fn (Forms\Get $get) => $get('type') !== OrganizationType::DIRECTORATE->value)
+                ->placeholder('— اختر الجهة الأم —')
+                ->helperText(fn (Forms\Get $get) => match ($get('type')) {
+                    OrganizationType::SCHOOL->value => 'اختر الإدارة التعليمية التابعة لها المدرسة.',
+                    OrganizationType::ADMINISTRATION->value => 'اختر المديرية التابعة لها الإدارة.',
+                    default => null,
+                }),
 
             Forms\Components\Toggle::make('is_active')
                 ->label('نشط')

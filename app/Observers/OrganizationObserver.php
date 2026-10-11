@@ -3,11 +3,10 @@
 namespace App\Observers;
 
 use App\Models\Organization;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Handles two concerns:
- *  1. Auto-builds / updates the materialized `path` when parent changes.
+ *  1. Auto-builds / updates the materialized `path` when creating or moving a node.
  *  2. Cascades path updates to all descendants when a node moves.
  */
 class OrganizationObserver
@@ -19,9 +18,13 @@ class OrganizationObserver
     public function saving(Organization $organization): void
     {
         if ($organization->parent_id === null) {
-            // Root node — path is set after create (we need the ID).
-            // Depth is always 0.
             $organization->depth = 0;
+            if ($organization->exists) {
+                $organization->path = "/{$organization->id}/";
+            } elseif (empty($organization->path)) {
+                // Temporary path satisfying NOT NULL during initial INSERT
+                $organization->path = '/';
+            }
             return;
         }
 
@@ -30,11 +33,19 @@ class OrganizationObserver
             ->find($organization->parent_id);
 
         if ($parent) {
-            $organization->depth = $parent->depth + 1;
-            // If the model is already persisted we can build the full path;
-            // for brand-new models the ID isn't available yet — handled in created().
+            $organization->depth = (int) $parent->depth + 1;
+            $parentPath = rtrim($parent->path ?? '/', '/') . '/';
+
             if ($organization->exists) {
-                $organization->path = $parent->path . "{$organization->id}/";
+                $organization->path = $parentPath . "{$organization->id}/";
+            } elseif (empty($organization->path)) {
+                // Temporary path satisfying NOT NULL during initial INSERT
+                $organization->path = $parentPath;
+            }
+        } else {
+            $organization->depth = 0;
+            if (! $organization->exists && empty($organization->path)) {
+                $organization->path = '/';
             }
         }
     }
@@ -45,19 +56,20 @@ class OrganizationObserver
      */
     public function created(Organization $organization): void
     {
-        if ($organization->parent_id === null) {
-            $organization->updateQuietly(['path' => "/{$organization->id}/"]);
-        } else {
+        $finalPath = "/{$organization->id}/";
+
+        if ($organization->parent_id !== null) {
             $parent = Organization::withoutGlobalScopes()
                 ->select('path')
                 ->find($organization->parent_id);
 
-            if ($parent) {
-                $organization->updateQuietly([
-                    'path' => $parent->path . "{$organization->id}/",
-                ]);
+            if ($parent && ! empty($parent->path)) {
+                $finalPath = rtrim($parent->path, '/') . "/{$organization->id}/";
             }
         }
+
+        $organization->updateQuietly(['path' => $finalPath]);
+        $organization->path = $finalPath;
     }
 
     /**
@@ -80,10 +92,10 @@ class OrganizationObserver
     private function cascadePathToDescendants(Organization $organization): void
     {
         // Fetch fresh path after the update
-        $newPath = $organization->fresh()->path;
+        $newPath = $organization->fresh()?->path ?? $organization->path;
         $oldPath = $organization->getOriginal('path');
 
-        if ($oldPath === $newPath) {
+        if ($oldPath === $newPath || empty($oldPath)) {
             return;
         }
 
