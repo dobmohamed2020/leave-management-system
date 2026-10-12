@@ -1466,6 +1466,14 @@
       "must_change_password": false
     },
     {
+      "email": "armant.hr@armant-schools.edu",
+      "name": "مسؤول شؤون العاملين بإدارة أرمنت",
+      "role": "شؤون عاملين",
+      "password": "123456789",
+      "phone": "01000000003",
+      "must_change_password": false
+    },
+    {
       "email": "armant.leaves@armant-schools.edu",
       "name": "مسؤول إجازات إدارة أرمنت",
       "role": "مسؤول الإجازات",

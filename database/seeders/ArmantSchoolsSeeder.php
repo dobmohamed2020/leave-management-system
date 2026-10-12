@@ -73,7 +73,7 @@ class ArmantSchoolsSeeder extends Seeder
         $userCount = 0;
         $defaultPassword = $payload['default_password'] ?? '123456789';
 
-        // Administration oversight accounts (from JSON when present).
+        // Administration oversight accounts (Director, HR affairs, Leaves officer)
         $adminAccounts = $payload['admin_accounts'] ?? [
             [
                 'email' => 'armant.manager@armant-schools.edu',
@@ -81,6 +81,14 @@ class ArmantSchoolsSeeder extends Seeder
                 'role'  => 'مدير الإدارة',
                 'password' => $defaultPassword,
                 'phone' => '01000000001',
+                'must_change_password' => false,
+            ],
+            [
+                'email' => 'armant.hr@armant-schools.edu',
+                'name'  => 'مسؤول شؤون العاملين بإدارة أرمنت',
+                'role'  => 'شؤون عاملين',
+                'password' => $defaultPassword,
+                'phone' => '01000000003',
                 'must_change_password' => false,
             ],
             [
@@ -112,47 +120,46 @@ class ArmantSchoolsSeeder extends Seeder
             $userCount++;
         }
 
+        // Schools: Manager account ONLY for each school
         foreach ($payload['schools'] as $index => $schoolData) {
             $school = $schools[$index];
             $code = strtolower($schoolData['code']);
 
-            foreach ($schoolData['accounts'] as $account) {
-                $roleName = self::ROLE_MAP[$account['role']] ?? null;
+            $managerAccount = collect($schoolData['accounts'] ?? [])
+                ->firstWhere('role', 'manager');
 
-                if (! $roleName) {
-                    $this->command?->warn("Unknown account role [{$account['role']}] for {$schoolData['code']}");
-
-                    continue;
-                }
-
-                $allowedEmails[] = $account['email'];
-
-                // Migrate legacy @armant-schools.example accounts to the new domain.
-                $legacyEmail = "{$code}.{$account['role']}@armant-schools.example";
-                $user = User::where('email', $account['email'])->first()
-                    ?? User::where('email', $legacyEmail)->first();
-
-                $attrs = [
-                    'email'                => $account['email'],
-                    'name'                 => "{$account['title']} — {$school->name}",
-                    'password'             => $account['password'] ?? $defaultPassword,
-                    'phone'                => User::normalizePhone($account['phone'] ?? null),
-                    'organization_id'      => $school->id,
-                    'is_active'            => true,
-                    'must_change_password' => (bool) ($account['must_change_password'] ?? false),
-                ];
-
-                if ($user) {
-                    $user->fill($attrs)->save();
-                } else {
-                    $user = User::create($attrs);
-                }
-
-                $this->assignRole($user, $roleName, $school->id);
-                $userCount++;
+            if (! $managerAccount) {
+                $this->command?->warn("Missing manager account for school {$schoolData['code']}");
+                continue;
             }
+
+            $allowedEmails[] = $managerAccount['email'];
+
+            $legacyEmail = "{$code}.manager@armant-schools.example";
+            $user = User::where('email', $managerAccount['email'])->first()
+                ?? User::where('email', $legacyEmail)->first();
+
+            $attrs = [
+                'email'                => $managerAccount['email'],
+                'name'                 => "مدير المدرسة — {$school->name}",
+                'password'             => $managerAccount['password'] ?? $defaultPassword,
+                'phone'                => User::normalizePhone($managerAccount['phone'] ?? null),
+                'organization_id'      => $school->id,
+                'is_active'            => true,
+                'must_change_password' => (bool) ($managerAccount['must_change_password'] ?? false),
+            ];
+
+            if ($user) {
+                $user->fill($attrs)->save();
+            } else {
+                $user = User::create($attrs);
+            }
+
+            $this->assignRole($user, 'مدير مدرسة', $school->id);
+            $userCount++;
         }
 
+        // Delete any accounts outside the allowed whitelist (removes specialist and test accounts)
         $deleted = User::query()
             ->where(function ($q) {
                 $q->where('email', 'like', '%@armant-schools.%');
@@ -163,6 +170,7 @@ class ArmantSchoolsSeeder extends Seeder
                 setPermissionsTeamId($user->organization_id);
                 $user->syncRoles([]);
                 $user->tokens()->delete();
+                $user->notifications()->delete();
                 $user->delete();
             })
             ->count();
@@ -170,82 +178,27 @@ class ArmantSchoolsSeeder extends Seeder
         setPermissionsTeamId(null);
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        $employeeCount = $this->seedEmployeesForSchools($schools);
+        // Delete all previously entered/demo employees and their related records
+        \Illuminate\Support\Facades\Schema::disableForeignKeyConstraints();
+        \App\Models\LeaveRequestStep::query()->delete();
+        \App\Models\LeaveRequestAttachment::query()->delete();
+        \App\Models\LeaveRequest::withoutGlobalScopes()->forceDelete();
+        \App\Models\LeaveBalanceTransaction::query()->delete();
+        \App\Models\LeaveBalance::query()->delete();
+        $deletedEmployees = Employee::withoutGlobalScopes()->forceDelete();
+        \Illuminate\Support\Facades\Schema::enableForeignKeyConstraints();
 
         // Ensure workflows exist for every school (including newly added ones).
         $this->call(WorkflowConfigurationSeeder::class);
 
         $domain = $payload['email_domain'] ?? 'armant-schools.edu';
-        $this->command?->info("✓ {$userCount} Armant school accounts seeded (@{$domain}).");
-        $this->command?->info("✓ Removed {$deleted} users outside the Armant schools list.");
-        $this->command?->info("✓ {$employeeCount} employees seeded for Armant schools.");
-        $this->command?->info('  School login : arm001.manager@armant-schools.edu');
-        $this->command?->info('  Admin login  : armant.manager@armant-schools.edu');
-    }
-
-    /**
-     * Ensure each Armant school has demo employees + leave balances.
-     *
-     * @param  list<Organization>  $schools
-     */
-    private function seedEmployeesForSchools(array $schools): int
-    {
-        $leaveTypes = LeaveType::all();
-        $year = now()->year;
-        $created = 0;
-        $gradesCodes = \App\Models\EntitlementGrade::where('is_active', true)->pluck('code')->toArray();
-        $defaultGrade = $gradesCodes[0] ?? null;
-
-        $jobTitles = ['معلم', 'معلم أول', 'وكيل', 'أمين مكتبة', 'أخصائي اجتماعي'];
-
-        foreach ($schools as $school) {
-            $existing = Employee::withoutGlobalScopes()
-                ->where('organization_id', $school->id)
-                ->count();
-
-            $needed = max(0, 3 - $existing);
-
-            for ($i = 0; $i < $needed; $i++) {
-                $employee = Employee::create([
-                    'organization_id'   => $school->id,
-                    'employee_code'     => 'EMP-' . strtoupper(substr(md5($school->id . $i . microtime()), 0, 6)),
-                    'full_name'         => 'موظف ' . ($existing + $i + 1) . ' — ' . $school->name,
-                    'job_title'         => $jobTitles[$i % count($jobTitles)],
-                    'entitlement_grade' => $defaultGrade,
-                    'hire_date'         => now()->subYears(rand(1, 15))->toDateString(),
-                    'work_start_date'   => now()->subYears(rand(1, 15))->toDateString(),
-                    'is_active'         => true,
-                ]);
-
-                foreach ($leaveTypes as $leaveType) {
-                    $entitled = match ($leaveType->code) {
-                        'regular' => $employee->regularLeaveEntitlement(),
-                        default   => $leaveType->yearly_entitlement,
-                    };
-
-                    if ($entitled == 0 && ! $leaveType->deducts_balance) {
-                        continue;
-                    }
-
-                    LeaveBalance::firstOrCreate(
-                        [
-                            'employee_id'   => $employee->id,
-                            'leave_type_id' => $leaveType->id,
-                            'year'          => $year,
-                        ],
-                        [
-                            'entitled'     => $entitled,
-                            'carried_over' => 0,
-                            'used'         => 0,
-                        ]
-                    );
-                }
-
-                $created++;
-            }
-        }
-
-        return $created;
+        $this->command?->info("✓ {$userCount} Armant accounts seeded (@{$domain}): 3 administration + ".count($schools).' school managers.');
+        $this->command?->info("✓ Removed {$deleted} users outside the whitelist (specialist and extra accounts removed).");
+        $this->command?->info("✓ Cleaned employees table: removed {$deletedEmployees} records (0 demo employees seeded).");
+        $this->command?->info('  Admin Manager : armant.manager@armant-schools.edu');
+        $this->command?->info('  HR Affairs    : armant.hr@armant-schools.edu');
+        $this->command?->info('  Leave Officer : armant.leaves@armant-schools.edu');
+        $this->command?->info('  School sample : arm001.manager@armant-schools.edu');
     }
 
     private function ensureOrganization(
