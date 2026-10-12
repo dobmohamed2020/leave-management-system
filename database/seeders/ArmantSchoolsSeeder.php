@@ -30,6 +30,14 @@ class ArmantSchoolsSeeder extends Seeder
             return;
         }
 
+        if (LeaveType::count() === 0) {
+            $this->call(LeaveTypeSeeder::class);
+        }
+
+        if (\App\Models\EntitlementGrade::count() === 0) {
+            $this->call(EntitlementGradeSeeder::class);
+        }
+
         $payload = json_decode(File::get($path), true, flags: JSON_THROW_ON_ERROR);
 
         $directorate = $this->ensureOrganization(
@@ -146,6 +154,9 @@ class ArmantSchoolsSeeder extends Seeder
         }
 
         $deleted = User::query()
+            ->where(function ($q) {
+                $q->where('email', 'like', '%@armant-schools.%');
+            })
             ->whereNotIn('email', $allowedEmails)
             ->get()
             ->each(function (User $user): void {

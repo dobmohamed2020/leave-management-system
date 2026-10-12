@@ -74,6 +74,42 @@ class EditEmployee extends EditRecord
         if ($this->record->user_id) {
             $phone = User::normalizePhone($this->record->phone);
             User::whereKey($this->record->user_id)->update(['phone' => $phone]);
+
+            if ($this->record->wasChanged('approval_role')) {
+                $user = User::find($this->record->user_id);
+                if ($user) {
+                    $organizationId = (int) $this->record->organization_id;
+                    setPermissionsTeamId($organizationId);
+
+                    $org = $this->record->organization ?? \App\Models\Organization::withoutGlobalScopes()->find($organizationId);
+                    $isAdministration = $org?->isAdministration();
+                    $isDirectorate    = $org?->isDirectorate();
+
+                    $spatieRoleName = match($this->record->approval_role) {
+                        \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL => 'مدير مدرسة',
+                        \App\Enums\ApprovalRole::LEAVES_OFFICER   => 'مسؤول الإجازات',
+                        \App\Enums\ApprovalRole::HR_AFFAIRS       => 'شؤون عاملين',
+                        \App\Enums\ApprovalRole::ADMIN_MANAGER    => 'مدير الإدارة',
+                        default                                   => match(true) {
+                            $isAdministration => 'كاتب الإدارة',
+                            $isDirectorate    => 'منسق المديرية',
+                            default           => 'موظف مدرسة',
+                        },
+                    };
+
+                    $role = \Spatie\Permission\Models\Role::query()
+                        ->where('name', $spatieRoleName)
+                        ->where('organization_id', $organizationId)
+                        ->first();
+
+                    if ($role) {
+                        $user->syncRoles([$role]);
+                    }
+
+                    app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+                    setPermissionsTeamId(null);
+                }
+            }
         }
 
         if (! $this->record->user_id && $this->createSystemUser) {

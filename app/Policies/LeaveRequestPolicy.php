@@ -28,7 +28,8 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('view_leave_requests');
+        return $user->hasPermissionTo('view_leave_requests')
+            || $user->hasPermissionTo('approve_leave_request');
     }
 
     /**

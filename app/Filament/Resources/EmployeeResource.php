@@ -83,7 +83,7 @@ class EmployeeResource extends Resource
             Forms\Components\Select::make('approval_role')
                 ->label('دور الاعتماد')
                 ->options(function (callable $get): array {
-                    $orgId = $get('organization_id');
+                    $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
                     if (! $orgId) return [];
 
                     $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
@@ -101,9 +101,9 @@ class EmployeeResource extends Resource
                         default => [],
                     };
                 })
-                ->reactive()
+                ->live()
                 ->hidden(function (callable $get): bool {
-                    $orgId = $get('organization_id');
+                    $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
                     if (! $orgId) return true;
                     $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
                     return ! $org || ! in_array($org->type, [
@@ -118,6 +118,8 @@ class EmployeeResource extends Resource
                 ->label('المؤسسة')
                 ->options(fn (): array => static::organizationOptions())
                 ->searchable()
+                ->preload()
+                ->live()
                 ->required(fn (): bool => ! static::isSchoolActor())
                 ->visible(fn (): bool => ! static::isSchoolActor())
                 ->default(fn () => auth()->user()?->organization_id),
@@ -170,7 +172,25 @@ class EmployeeResource extends Resource
 
             // مدرسة أو إدارة: إنشاء حساب دخول جديد مرتبط بالموظف
             Forms\Components\Section::make('حساب دخول للنظام')
-                ->description('فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور: موظف مدرسة.')
+                ->description(function (Get $get): string {
+                    $approvalRole = $get('approval_role');
+                    if ($approvalRole) {
+                        $roleEnum = \App\Enums\ApprovalRole::tryFrom($approvalRole);
+                        if ($roleEnum) {
+                            return "فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور الذي سيُمنح للحساب: {$roleEnum->label()}.";
+                        }
+                    }
+
+                    $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
+                    if ($orgId) {
+                        $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
+                        if ($org?->isAdministration()) {
+                            return 'فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور: موظف إدارة.';
+                        }
+                    }
+
+                    return 'فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور: موظف مدرسة.';
+                })
                 ->schema([
                     Forms\Components\Toggle::make('is_system_employee')
                         ->label('إنشاء حساب دخول')
@@ -264,7 +284,7 @@ class EmployeeResource extends Resource
     }
 
     /**
-     * Create a system login user for an employee and assign school_employee role.
+     * Create a system login user for an employee and assign appropriate role.
      */
     public static function provisionSystemUser(
         Employee $employee,
@@ -282,23 +302,39 @@ class EmployeeResource extends Resource
             'password'             => $password,
             'organization_id'      => $organizationId,
             'is_active'            => true,
-            'must_change_password' => true,
+            'must_change_password' => false,
         ]);
 
         setPermissionsTeamId($organizationId);
+
+        $org = $employee->organization ?? Organization::withoutGlobalScopes()->find($organizationId);
+        $isAdministration = $org?->isAdministration();
+        $isDirectorate    = $org?->isDirectorate();
 
         $spatieRoleName = match($employee->approval_role) {
             \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL => 'مدير مدرسة',
             \App\Enums\ApprovalRole::LEAVES_OFFICER   => 'مسؤول الإجازات',
             \App\Enums\ApprovalRole::HR_AFFAIRS       => 'شؤون عاملين',
             \App\Enums\ApprovalRole::ADMIN_MANAGER    => 'مدير الإدارة',
-            default                                   => 'موظف مدرسة',
+            default                                   => match(true) {
+                $isAdministration => 'كاتب الإدارة',
+                $isDirectorate    => 'منسق المديرية',
+                default           => 'موظف مدرسة',
+            },
         };
 
         $role = \Spatie\Permission\Models\Role::query()
             ->where('name', $spatieRoleName)
             ->where('organization_id', $organizationId)
             ->first();
+
+        if (! $role && $org) {
+            \Database\Seeders\RoleAndPermissionSeeder::seedForOrganization($org);
+            $role = \Spatie\Permission\Models\Role::query()
+                ->where('name', $spatieRoleName)
+                ->where('organization_id', $organizationId)
+                ->first();
+        }
 
         if ($role) {
             $user->assignRole($role);
@@ -318,16 +354,30 @@ class EmployeeResource extends Resource
     public static function organizationOptions(): array
     {
         $user = auth()->user();
-        $query = Organization::withoutGlobalScopes()->orderBy('name');
+        if (! $user) {
+            return [];
+        }
 
-        if ($user?->organization?->isAdministration()) {
-            $query->where('parent_id', $user->organization_id)
-                ->where('type', OrganizationType::SCHOOL->value);
-        } elseif ($user?->organization?->isSchool()) {
+        $query = Organization::withoutGlobalScopes()->orderBy('type')->orderBy('name');
+
+        if ($user->organization?->isAdministration()) {
+            $query->where(function ($q) use ($user) {
+                $q->where('id', $user->organization_id)
+                    ->orWhere('parent_id', $user->organization_id);
+            });
+        } elseif ($user->organization?->isDirectorate()) {
+            $query->whereIn('id', $user->organization->subtreeIds());
+        } elseif ($user->organization?->isSchool()) {
             $query->where('id', $user->organization_id);
         }
 
-        return $query->pluck('name', 'id')->toArray();
+        return $query->get()->mapWithKeys(function (Organization $org) use ($user) {
+            $label = $org->name;
+            if ($org->id === $user->organization_id && $org->isAdministration()) {
+                $label .= ' (الإدارة)';
+            }
+            return [$org->id => $label];
+        })->toArray();
     }
 
     // -------------------------------------------------------------------------

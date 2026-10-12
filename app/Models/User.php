@@ -190,6 +190,7 @@ class User extends Authenticatable implements FilamentUser
                 'وكيل المديرية',
                 'مدير الإدارة',
                 'مسؤول الإجازات',
+                'شؤون عاملين',
                 'كاتب الإدارة',
                 'مدير مدرسة',
                 'وكيل مدرسة',

@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Enums\LeaveStatus;
 use App\Enums\StepStatus;
 use App\Exceptions\LeaveRequestException;
+use App\Filament\Resources\LeaveRequestResource;
 use App\Models\LeaveRequest;
 use Filament\Forms;
 use Filament\Notifications\Notification;
@@ -178,9 +179,15 @@ class PendingApprovalPage extends Page implements HasTable
                     ->dateTime('Y-m-d H:i')
                     ->sortable(),
             ])
+            ->recordUrl(fn (LeaveRequest $record): string => LeaveRequestResource::getUrl('view', ['record' => $record]))
             ->emptyStateHeading('لا توجد طلبات بانتظار اعتمادك')
             ->emptyStateDescription('لا توجد طلبات في انتظار اعتمادك حالياً')
             ->actions([
+                // --- عرض ---
+                Tables\Actions\ViewAction::make()
+                    ->label('عرض')
+                    ->url(fn (LeaveRequest $record): string => LeaveRequestResource::getUrl('view', ['record' => $record])),
+
                 // --- اعتماد ---
                 Tables\Actions\Action::make('approve')
                     ->label('اعتماد')

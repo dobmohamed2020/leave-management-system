@@ -220,42 +220,54 @@ class RoleAndPermissionSeeder extends Seeder
             Permission::updateOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
 
-        $this->command->info('✓ ' . count(self::PERMISSIONS) . ' permissions created.');
+        $this->command?->info('✓ ' . count(self::PERMISSIONS) . ' permissions created.');
 
         // 2. Create roles scoped to each real organization
         //    Spatie teams: organization_id is the "team_id"
         $organizations = Organization::all();
 
         foreach ($organizations as $org) {
-            setPermissionsTeamId($org->id);
-
-            foreach (self::ROLES as $key => $definition) {
-                // Only create roles that match this org type
-                if (! in_array($org->type, $definition['org_types'])) {
-                    continue;
-                }
-
-                $role = Role::updateOrCreate(
-                    [
-                        'name'            => $definition['label'],
-                        'guard_name'      => 'web',
-                        'organization_id' => $org->id,
-                    ],
-                    []
-                );
-
-                $permissions = array_filter(
-                    $definition['permissions'],
-                    fn($p) => in_array($p, self::PERMISSIONS)
-                );
-
-                $role->syncPermissions($permissions);
-            }
+            self::seedForOrganization($org);
         }
 
-        $this->command->info("✓ Roles created for {$organizations->count()} organizations.");
+        $this->command?->info("✓ Roles created for {$organizations->count()} organizations.");
 
         // Reset team context
+        setPermissionsTeamId(null);
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
+    }
+
+    public static function seedForOrganization(Organization $org): void
+    {
+        // Ensure permissions exist
+        foreach (self::PERMISSIONS as $perm) {
+            Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+
+        setPermissionsTeamId($org->id);
+
+        foreach (self::ROLES as $key => $definition) {
+            if (! in_array($org->type, $definition['org_types'])) {
+                continue;
+            }
+
+            $role = Role::updateOrCreate(
+                [
+                    'name'            => $definition['label'],
+                    'guard_name'      => 'web',
+                    'organization_id' => $org->id,
+                ],
+                []
+            );
+
+            $permissions = array_filter(
+                $definition['permissions'],
+                fn($p) => in_array($p, self::PERMISSIONS)
+            );
+
+            $role->syncPermissions($permissions);
+        }
+
         setPermissionsTeamId(null);
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
     }

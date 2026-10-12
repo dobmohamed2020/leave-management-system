@@ -322,7 +322,56 @@
     </div>
 
     @if(request()->boolean('autoprint'))
-        <script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
+        <script>
+            (function () {
+                let printed = false;
+
+                function doPrint() {
+                    if (printed) return;
+                    printed = true;
+
+                    // 1. Focus the window (required by Chrome & Edge on Windows)
+                    try {
+                        window.focus();
+                    } catch (e) {}
+
+                    // 2. Wait for web fonts (e.g., Tajawal) to finish loading
+                    const fontPromise = (document.fonts && document.fonts.ready)
+                        ? document.fonts.ready
+                        : Promise.resolve();
+
+                    fontPromise.then(function () {
+                        setTimeout(function () {
+                            try {
+                                window.focus();
+                                window.print();
+                            } catch (err) {
+                                console.error('Print trigger failed:', err);
+                            }
+                        }, 350);
+                    }).catch(function () {
+                        setTimeout(function () {
+                            try {
+                                window.focus();
+                                window.print();
+                            } catch (err) {
+                                console.error('Print trigger fallback failed:', err);
+                            }
+                        }, 400);
+                    });
+                }
+
+                // If page is already loaded (from cache or fast local rendering)
+                if (document.readyState === 'complete') {
+                    doPrint();
+                } else {
+                    window.addEventListener('load', doPrint);
+                    document.addEventListener('DOMContentLoaded', function () {
+                        setTimeout(doPrint, 500);
+                    });
+                }
+            })();
+        </script>
     @endif
 </body>
 </html>
