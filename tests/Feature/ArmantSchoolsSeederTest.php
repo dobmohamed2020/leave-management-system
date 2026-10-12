@@ -35,42 +35,46 @@ it('seeds armant schools, administrations, and users correctly via ArmantSchools
     $schoolsCount = Organization::withoutGlobalScopes()->where('parent_id', $administration->id)->count();
     expect($schoolsCount)->toBe(63);
 
-    // Verify Admin users (Director of Administration & Leave Officer)
+    // Verify Admin users (Director of Administration, HR Affairs, & Leave Officer)
     $manager = User::where('email', 'armant.manager@armant-schools.edu')->first();
     expect($manager)->not->toBeNull()
         ->and($manager->phone)->toBe('01000000001')
         ->and(Hash::check('123456789', $manager->password))->toBeTrue();
+
+    $hr = User::where('email', 'armant.hr@armant-schools.edu')->first();
+    expect($hr)->not->toBeNull()
+        ->and($hr->phone)->toBe('01000000003')
+        ->and(Hash::check('123456789', $hr->password))->toBeTrue();
 
     $leaves = User::where('email', 'armant.leaves@armant-schools.edu')->first();
     expect($leaves)->not->toBeNull()
         ->and($leaves->phone)->toBe('01000000002')
         ->and(Hash::check('123456789', $leaves->password))->toBeTrue();
 
-    // Verify School users (126 users for 63 schools + 2 admin = 128 users)
+    // Verify School users (63 managers for 63 schools + 3 admin = 66 users)
     $armUsersCount = User::where('email', 'like', '%@armant-schools.edu')->count();
-    expect($armUsersCount)->toBe(128);
+    expect($armUsersCount)->toBe(66);
 
-    // Verify first school users
+    // Verify first school users (manager exists, specialist does not)
     $school1Manager = User::where('email', 'arm001.manager@armant-schools.edu')->first();
     expect($school1Manager)->not->toBeNull()
         ->and($school1Manager->phone)->toBe('01000110000')
         ->and(Hash::check('123456789', $school1Manager->password))->toBeTrue();
 
     $school1Specialist = User::where('email', 'arm001.specialist@armant-schools.edu')->first();
-    expect($school1Specialist)->not->toBeNull()
-        ->and($school1Specialist->phone)->toBe('01000120000')
-        ->and(Hash::check('123456789', $school1Specialist->password))->toBeTrue();
+    expect($school1Specialist)->toBeNull();
 
-    // Verify last school users (arm063)
+    // Verify last school users (arm063) (manager exists, specialist does not)
     $school63Manager = User::where('email', 'arm063.manager@armant-schools.edu')->first();
     expect($school63Manager)->not->toBeNull()
         ->and($school63Manager->phone)->toBe('01006310000')
         ->and(Hash::check('123456789', $school63Manager->password))->toBeTrue();
 
     $school63Specialist = User::where('email', 'arm063.specialist@armant-schools.edu')->first();
-    expect($school63Specialist)->not->toBeNull()
-        ->and($school63Specialist->phone)->toBe('01006320000')
-        ->and(Hash::check('123456789', $school63Specialist->password))->toBeTrue();
+    expect($school63Specialist)->toBeNull();
+
+    // Verify zero demo employees remain (employees table cleaned)
+    expect(\App\Models\Employee::withoutGlobalScopes()->count())->toBe(0);
 
     // Verify finding by phone works for login
     $foundByPhone = User::findForLogin('01006310000');
@@ -83,10 +87,13 @@ it('seeds armant schools, administrations, and users correctly via ArmantSchools
         ->and($foundByEmail->id)->toBe($school63Manager->id);
 });
 
-it('can be run via ArmantCredentialsSeeder proxy', function () {
+it('can be run via ArmantCredentialsSeeder proxy and ArmantProductionSeeder', function () {
     $this->seed(ArmantCredentialsSeeder::class);
+    $this->seed(\Database\Seeders\ArmantProductionSeeder::class);
 
     expect(User::where('email', 'armant.manager@armant-schools.edu')->exists())->toBeTrue()
+        ->and(User::where('email', 'armant.hr@armant-schools.edu')->exists())->toBeTrue()
+        ->and(User::where('email', 'armant.leaves@armant-schools.edu')->exists())->toBeTrue()
         ->and(Organization::where('code', 'ARM063')->exists())->toBeTrue();
 });
 

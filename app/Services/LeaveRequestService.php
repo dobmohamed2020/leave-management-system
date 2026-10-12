@@ -370,6 +370,11 @@ class LeaveRequestService
                         now()->year
                     );
                     $this->balanceService->deduct($balance, (int) $request->days, $request, $actedBy);
+
+                    $balance->refresh();
+                    $request->balance_used      = $balance->used;
+                    $request->balance_remaining = $balance->remaining;
+                    $request->save();
                 }
 
                 $this->notifyApproved($request);
@@ -498,6 +503,11 @@ class LeaveRequestService
                     now()->year
                 );
                 $this->balanceService->refund($balance, (int) $request->days, $request, $cancelledBy);
+
+                $balance->refresh();
+                $request->balance_used      = $balance->used;
+                $request->balance_remaining = $balance->remaining;
+                $request->save();
             }
 
             return $request->fresh();

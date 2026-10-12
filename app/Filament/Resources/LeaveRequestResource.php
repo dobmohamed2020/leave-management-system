@@ -244,13 +244,22 @@ class LeaveRequestResource extends Resource
             Infolists\Components\Section::make('معلومات الرصيد')
                 ->schema([
                     Infolists\Components\TextEntry::make('balance_entitled')
-                        ->label('المستحق'),
+                        ->label('المستحق')
+                        ->suffix(' يوم'),
 
                     Infolists\Components\TextEntry::make('balance_used')
-                        ->label('المستخدم'),
+                        ->label(fn (LeaveRequest $record): string =>
+                            $record->status === LeaveStatus::APPROVED ? 'المستخدم (بعد الاعتماد)' : 'المستخدم'
+                        )
+                        ->suffix(' يوم'),
 
                     Infolists\Components\TextEntry::make('balance_remaining')
-                        ->label('المتبقي'),
+                        ->label(fn (LeaveRequest $record): string =>
+                            $record->status === LeaveStatus::APPROVED ? 'المتبقي (بعد الاعتماد)' : 'المتبقي'
+                        )
+                        ->suffix(' يوم')
+                        ->weight(\Filament\Support\Enums\FontWeight::Bold)
+                        ->color('success'),
                 ])
                 ->columns(3)
                 ->visible(fn(LeaveRequest $record) => $record->balance_entitled !== null),
