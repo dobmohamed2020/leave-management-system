@@ -98,3 +98,13 @@ Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
         ['Content-Type' => 'application/pdf']
     );
 })->middleware('auth')->name('report.pdf.download');
+
+// Authenticated credentials PDF download / view route
+Route::get('/credentials-pdf', function () {
+    $content = app(\App\Services\CredentialsPdfService::class)->generate();
+    return response($content, 200, [
+        'Content-Type' => 'application/pdf',
+        'Content-Disposition' => 'inline; filename="armant-credentials.pdf"',
+    ]);
+})->middleware('auth')->name('credentials.pdf');
+
