@@ -26,19 +26,15 @@ class CredentialsPdfService
     }
 
     /**
-     * Generate and save the PDF file to disk.
+     * Generate and save the PDF file to secure private storage.
      */
     public function saveToDisk(?string $path = null): string
     {
-        $path = $path ?? public_path('armant-credentials.pdf');
+        $path = $path ?? storage_path('app/credentials/armant-credentials.pdf');
         $pdfBinary = $this->generate();
 
+        File::ensureDirectoryExists(dirname($path));
         File::put($path, $pdfBinary);
-
-        // Also ensure it is in storage/app/public
-        $storagePath = storage_path('app/public/armant-credentials.pdf');
-        File::ensureDirectoryExists(dirname($storagePath));
-        File::put($storagePath, $pdfBinary);
 
         return $path;
     }

@@ -99,9 +99,26 @@ Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
     );
 })->middleware('auth')->name('report.pdf.download');
 
-// Authenticated credentials PDF download / view route
+// Authenticated credentials PDF download / view route (Admin Manager & Super Admin only)
 Route::get('/credentials-pdf', function () {
+    $user = auth()->user();
+
+    if (! $user) {
+        abort(403, 'غير مصرح لك بالوصول.');
+    }
+
+    $user->setOrganizationTeam();
+
+    $canDownload = $user->email === 'admin@rtltec.com'
+        || $user->hasRole(['مدير المديرية', 'مدير الإدارة'])
+        || $user->can('manage_users');
+
+    if (! $canDownload) {
+        abort(403, 'غير مصرح لك بتحميل هذا الملف. متاح فقط لمدير الإدارة ومدير النظام.');
+    }
+
     $content = app(\App\Services\CredentialsPdfService::class)->generate();
+
     return response($content, 200, [
         'Content-Type' => 'application/pdf',
         'Content-Disposition' => 'inline; filename="armant-credentials.pdf"',

@@ -20,7 +20,7 @@ class ExportCredentialsPdfCommand extends Command
         $sizeKb = round(filesize($outputPath) / 1024, 2);
 
         $this->info("✓ PDF successfully generated: {$outputPath} ({$sizeKb} KB)");
-        $this->line("  Public link : /armant-credentials.pdf");
+        $this->line("  Protected link : /credentials-pdf (Admin Manager & Super Admin only)");
 
         return self::SUCCESS;
     }
