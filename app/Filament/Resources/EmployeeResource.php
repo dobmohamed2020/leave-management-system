@@ -729,7 +729,13 @@ class EmployeeResource extends Resource
                                         Infolists\Components\TextEntry::make('status_label')
                                             ->label('الحالة')
                                             ->badge()
-                                            ->color(fn ($state, array $record): string => $record['status_color'] ?? 'gray'),
+                                            ->color(fn ($state): string => match ($state) {
+                                                'معتمد' => 'success',
+                                                'مرفوض', 'تم حذفه' => 'danger',
+                                                'قيد المراجعة', 'مُعاد للتعديل' => 'warning',
+                                                'مقدّم' => 'info',
+                                                default => 'gray',
+                                            }),
                                     ]),
                             ]),
                     ])
