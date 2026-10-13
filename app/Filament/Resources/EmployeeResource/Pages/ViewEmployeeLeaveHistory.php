@@ -158,12 +158,13 @@ class ViewEmployeeLeaveHistory extends Page
         $this->balanceRows = $rawBalances
             ->sortByDesc('year')
             ->map(fn ($b) => [
-                'year'            => $b->year,
-                'leave_type_name' => $b->leaveType?->name ?? '—',
-                'entitled'        => (int) $b->entitled,
-                'carried_over'    => (int) $b->carried_over,
-                'used'            => (int) $b->used,
-                'remaining'       => max(0, (int) $b->entitled + (int) $b->carried_over - (int) $b->used),
+                'year'              => $b->year,
+                'leave_type_name'   => $b->leaveType?->name ?? '—',
+                'entitled'          => (int) $b->entitled,
+                'carried_over'      => (int) $b->carried_over,
+                'used_from_carried' => (int) $b->used_from_carried,
+                'used'              => (int) $b->used,
+                'remaining'         => (int) $b->remaining,
             ])
             ->values();
 

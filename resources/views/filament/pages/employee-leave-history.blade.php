@@ -169,7 +169,8 @@
                             <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">نوع الإجازة</th>
                             <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">المستحق</th>
                             <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">المُرحَّل</th>
-                            <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">المستخدم</th>
+                            <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">مستخدم من المُرحَّل</th>
+                            <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">إجمالي المستخدم</th>
                             <th class="px-4 py-3 text-right font-semibold text-gray-600 dark:text-gray-300">المتبقي</th>
                         </tr>
                     </thead>
@@ -180,6 +181,7 @@
                                 <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ $row['leave_type_name'] }}</td>
                                 <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ $row['entitled'] }}</td>
                                 <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ $row['carried_over'] }}</td>
+                                <td class="px-4 py-3 text-amber-600 dark:text-amber-400 font-medium">{{ $row['used_from_carried'] ?? 0 }}</td>
                                 <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ $row['used'] }}</td>
                                 <td class="px-4 py-3 font-semibold {{ $row['remaining'] <= 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400' }}">
                                     {{ $row['remaining'] }}

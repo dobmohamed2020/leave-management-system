@@ -141,20 +141,23 @@ class EmployeeResource extends Resource
                 ->searchable()
                 ->helperText('تُدار الدرجات من الإعدادات ← الدرجات الوظيفية'),
 
-            Forms\Components\TextInput::make('initial_balance_days')
-                ->label('رصيد إجازات اعتيادية مُرحَّل (أيام)')
-                ->helperText(fn (?Employee $record): string => $record === null
-                    ? 'أدخل عدد الأيام التي يمتلكها الموظف من سنوات سابقة. سيُضاف إلى رصيد الترحيل للسنة الحالية.'
-                    : 'اتركها فارغة إذا لم ترد تعديل الرصيد المُرحَّل. أي قيمة مُدخلة ستُضاف للرصيد الحالي.'
-                )
-                ->numeric()
-                ->integer()
-                ->minValue(0)
-                ->maxValue(365)
-                ->nullable()
-                ->default(null)
-                ->dehydrated(false)
-                ->placeholder('0'),
+            Forms\Components\Section::make('رصيد الإجازات المُرحَّل (سنوات سابقة)')
+                ->description('إدارة عدد أيام الإجازة الاعتيادية المُرحَّلة من السنوات السابقة.')
+                ->schema([
+                    Forms\Components\TextInput::make('initial_balance_days')
+                        ->label('عدد الأيام المُرحَّلة')
+                        ->helperText(fn (?Employee $record): string => $record === null
+                            ? 'أدخل عدد الأيام المتبقية للموظف من سنوات سابقة كـ (رصيد إضافي مُرحَّل). اتركه 0 إذا لم يكن لديه رصيد سابق.'
+                            : 'الرصيد المُرحَّل الحالي للموظف. يمكنك تعديل الرقم مباشرة ليتم تحديثه في النظام فور الحفظ.'
+                        )
+                        ->numeric()
+                        ->integer()
+                        ->minValue(0)
+                        ->maxValue(365)
+                        ->nullable()
+                        ->placeholder('0'),
+                ])
+                ->collapsible(),
 
             // الإدارة: ربط بحساب موجود (بدل إنشاء جديد)
             Forms\Components\Select::make('user_id')
@@ -615,15 +618,16 @@ class EmployeeResource extends Resource
                                                     ->currentYear()
                                                     ->get()
                                                     ->map(fn ($b) => [
-                                                        'leave_type' => $b->leaveType?->name ?? '—',
-                                                        'entitled'   => (int) $b->entitled,
-                                                        'carried'    => (int) $b->carried_over,
-                                                        'used'       => (int) $b->used,
-                                                        'remaining'  => max(0, (int) $b->entitled + (int) $b->carried_over - (int) $b->used),
+                                                        'leave_type'        => $b->leaveType?->name ?? '—',
+                                                        'entitled'          => (int) $b->entitled,
+                                                        'carried'           => (int) $b->carried_over,
+                                                        'used_from_carried' => (int) $b->used_from_carried,
+                                                        'used'              => (int) $b->used,
+                                                        'remaining'         => (int) $b->remaining,
                                                     ])
                                                     ->toArray()
                                             )
-                                            ->columns(5)
+                                            ->columns(6)
                                             ->schema([
                                                 Infolists\Components\TextEntry::make('leave_type')
                                                     ->label('نوع الإجازة')
@@ -639,10 +643,15 @@ class EmployeeResource extends Resource
                                                     ->suffix(' يوم')
                                                     ->color('info'),
 
-                                                Infolists\Components\TextEntry::make('used')
-                                                    ->label('المستخدم')
+                                                Infolists\Components\TextEntry::make('used_from_carried')
+                                                    ->label('مستخدم من المُرحَّل')
                                                     ->suffix(' يوم')
                                                     ->color('warning'),
+
+                                                Infolists\Components\TextEntry::make('used')
+                                                    ->label('إجمالي المستخدم')
+                                                    ->suffix(' يوم')
+                                                    ->color('danger'),
 
                                                 Infolists\Components\TextEntry::make('remaining')
                                                     ->label('المتبقي')
@@ -652,8 +661,8 @@ class EmployeeResource extends Resource
                                             ]),
                                     ]),
 
-                                Infolists\Components\Section::make('الإجازة الاعتيادية — ملخص الاستحقاق')
-                                    ->columns(2)
+                                Infolists\Components\Section::make('الإجازة الاعتيادية — تفاصيل الرصيد والمُرحَّل للسنة الحالية')
+                                    ->columns(4)
                                     ->schema([
                                         Infolists\Components\TextEntry::make('regular_entitlement')
                                             ->label('المستحق النظامي هذه السنة')
@@ -661,24 +670,108 @@ class EmployeeResource extends Resource
                                                 $record->regularLeaveEntitlement() . ' يوم'
                                             )
                                             ->badge()
-                                            ->color('success'),
+                                            ->color('primary'),
+
+                                        Infolists\Components\TextEntry::make('regular_carried')
+                                            ->label('عدد الأيام المُرحَّلة')
+                                            ->state(function (Employee $record): string {
+                                                $balance = $record->leaveBalances()
+                                                    ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
+                                                    ->currentYear()
+                                                    ->first();
+                                                return ($balance ? (int) $balance->carried_over : 0) . ' يوم';
+                                            })
+                                            ->badge()
+                                            ->color('info'),
+
+                                        Infolists\Components\TextEntry::make('regular_used_carried')
+                                            ->label('مستخدم من المُرحَّل')
+                                            ->state(function (Employee $record): string {
+                                                $balance = $record->leaveBalances()
+                                                    ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
+                                                    ->currentYear()
+                                                    ->first();
+                                                if (! $balance) return '0 يوم';
+                                                return "{$balance->used_from_carried} يوم (متبقي من المُرحَّل: {$balance->remaining_carried} يوم)";
+                                            })
+                                            ->badge()
+                                            ->color('warning'),
 
                                         Infolists\Components\TextEntry::make('regular_balance_remaining')
-                                            ->label('المتبقي من الإجازة الاعتيادية')
+                                            ->label('إجمالي المتبقي (اعتيادي)')
                                             ->state(function (Employee $record): string {
                                                 $balance = $record->leaveBalances()
                                                     ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
                                                     ->currentYear()
                                                     ->first();
                                                 if (! $balance) return 'لا يوجد رصيد مسجل';
-                                                $rem = max(0, (int)$balance->entitled + (int)$balance->carried_over - (int)$balance->used);
-                                                return $rem . ' يوم';
+                                                return $balance->remaining . ' يوم';
                                             })
                                             ->badge()
                                             ->color(fn (string $state): string =>
                                                 str_contains($state, 'لا') ? 'gray' :
                                                 ((int) $state > 0 ? 'success' : 'danger')
                                             ),
+                                    ]),
+
+                                Infolists\Components\Section::make('سجل الأرصدة عبر السنوات')
+                                    ->description('سجل تفصيلي يوضح لكل سنة: المستحق، عدد الأيام المُرحَّلة، المستهلك من المُرحَّل، إجمالي المستخدم، والمتبقي.')
+                                    ->schema([
+                                        Infolists\Components\RepeatableEntry::make('allYearsBalances')
+                                            ->label('')
+                                            ->state(fn (Employee $record) =>
+                                                $record->leaveBalances()
+                                                    ->with('leaveType')
+                                                    ->orderByDesc('year')
+                                                    ->get()
+                                                    ->map(fn ($b) => [
+                                                        'year'              => $b->year,
+                                                        'leave_type'        => $b->leaveType?->name ?? '—',
+                                                        'entitled'          => (int) $b->entitled,
+                                                        'carried'           => (int) $b->carried_over,
+                                                        'used_from_carried' => (int) $b->used_from_carried,
+                                                        'used'              => (int) $b->used,
+                                                        'remaining'         => (int) $b->remaining,
+                                                    ])
+                                                    ->toArray()
+                                            )
+                                            ->columns(7)
+                                            ->schema([
+                                                Infolists\Components\TextEntry::make('year')
+                                                    ->label('السنة')
+                                                    ->badge()
+                                                    ->color('primary'),
+
+                                                Infolists\Components\TextEntry::make('leave_type')
+                                                    ->label('نوع الإجازة')
+                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+
+                                                Infolists\Components\TextEntry::make('entitled')
+                                                    ->label('المستحق')
+                                                    ->suffix(' يوم')
+                                                    ->color('primary'),
+
+                                                Infolists\Components\TextEntry::make('carried')
+                                                    ->label('المُرحَّل')
+                                                    ->suffix(' يوم')
+                                                    ->color('info'),
+
+                                                Infolists\Components\TextEntry::make('used_from_carried')
+                                                    ->label('مستخدم من المُرحَّل')
+                                                    ->suffix(' يوم')
+                                                    ->color('warning'),
+
+                                                Infolists\Components\TextEntry::make('used')
+                                                    ->label('إجمالي المستخدم')
+                                                    ->suffix(' يوم')
+                                                    ->color('danger'),
+
+                                                Infolists\Components\TextEntry::make('remaining')
+                                                    ->label('المتبقي')
+                                                    ->suffix(' يوم')
+                                                    ->color(fn ($state): string => ((int) $state) > 0 ? 'success' : 'danger')
+                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                            ]),
                                     ]),
                             ]),
 
