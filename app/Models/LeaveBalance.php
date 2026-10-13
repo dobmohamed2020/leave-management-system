@@ -79,6 +79,38 @@ class LeaveBalance extends Model
         return max(0, (int) $this->entitled + (int) $this->carried_over - (int) $this->used);
     }
 
+    /**
+     * الأيام المستهلكة من الرصيد المُرحَّل أولاً (قاعدة استنفاد الرصيد الأقدم).
+     */
+    public function getUsedFromCarriedAttribute(): int
+    {
+        return min((int) $this->used, (int) $this->carried_over);
+    }
+
+    /**
+     * المتبقي من الرصيد المُرحَّل.
+     */
+    public function getRemainingCarriedAttribute(): int
+    {
+        return max(0, (int) $this->carried_over - $this->used_from_carried);
+    }
+
+    /**
+     * الأيام المستهلكة من الرصيد المستحق للسنة الحالية (بعد استنفاد المُرحَّل).
+     */
+    public function getUsedFromEntitledAttribute(): int
+    {
+        return max(0, (int) $this->used - (int) $this->carried_over);
+    }
+
+    /**
+     * المتبقي من الرصيد المستحق للسنة الحالية.
+     */
+    public function getRemainingEntitledAttribute(): int
+    {
+        return max(0, (int) $this->entitled - $this->used_from_entitled);
+    }
+
     // -------------------------------------------------------------------------
     // Scopes
     // -------------------------------------------------------------------------

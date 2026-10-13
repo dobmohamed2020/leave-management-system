@@ -26,13 +26,21 @@ class EditEmployee extends EditRecord
 
     protected ?string $systemPhone = null;
 
-    protected int $additionalBalanceDays = 0;
+    protected ?int $targetCarriedOverDays = null;
 
-    protected function getHeaderActions(): array
+    protected function mutateFormDataBeforeFill(array $data): array
     {
-        return [
-            Actions\DeleteAction::make(),
-        ];
+        $regularType = LeaveType::where('code', 'regular')->first();
+        if ($regularType) {
+            $balance = $this->record->leaveBalances()
+                ->where('leave_type_id', $regularType->id)
+                ->currentYear()
+                ->first();
+
+            $data['initial_balance_days'] = $balance ? (int) $balance->carried_over : 0;
+        }
+
+        return $data;
     }
 
     protected function mutateFormDataBeforeSave(array $data): array
@@ -42,11 +50,9 @@ class EditEmployee extends EditRecord
         $this->systemPassword = $this->data['system_password'] ?? $data['system_password'] ?? null;
         $this->systemPhone = $this->data['system_phone'] ?? $data['system_phone'] ?? null;
 
-        // Capture additional legacy balance days before stripping from form data
-        $this->additionalBalanceDays = max(
-            0,
-            (int) ($this->data['initial_balance_days'] ?? $data['initial_balance_days'] ?? 0)
-        );
+        // Capture target carried over days
+        $rawCarried = $this->data['initial_balance_days'] ?? $data['initial_balance_days'] ?? null;
+        $this->targetCarriedOverDays = $rawCarried !== null ? max(0, (int) $rawCarried) : null;
 
         unset(
             $data['is_system_employee'],
@@ -123,14 +129,14 @@ class EditEmployee extends EditRecord
             }
         }
 
-        // Apply additional legacy balance days to carried_over (additive)
-        if ($this->additionalBalanceDays > 0) {
+        // Update carried_over days to the exact specified target
+        if ($this->targetCarriedOverDays !== null) {
             $regularType = LeaveType::where('code', 'regular')->active()->first();
 
             if (! $regularType) {
-                Log::warning('Additional balance not applied: no active LeaveType with code=regular', [
-                    'employee_id'           => $this->record->id,
-                    'additional_balance_days' => $this->additionalBalanceDays,
+                Log::warning('Carried over balance not applied: no active LeaveType with code=regular', [
+                    'employee_id'               => $this->record->id,
+                    'target_carried_over_days' => $this->targetCarriedOverDays,
                 ]);
 
                 Notification::make()
@@ -141,20 +147,25 @@ class EditEmployee extends EditRecord
             } else {
                 $service = app(\App\Services\LeaveBalanceService::class);
                 $balance = $service->getOrCreateBalance($this->record, $regularType, now()->year);
+                $target  = max(0, $this->targetCarriedOverDays);
 
-                DB::transaction(function () use ($balance) {
-                    $balance = LeaveBalance::lockForUpdate()->findOrFail($balance->id);
+                if ((int) $balance->carried_over !== $target) {
+                    $diff = $target - (int) $balance->carried_over;
 
-                    LeaveBalanceTransaction::create([
-                        'leave_balance_id' => $balance->id,
-                        'type'             => TransactionType::CARRYOVER,
-                        'days'             => $this->additionalBalanceDays,
-                        'note'             => "رصيد مُرحَّل مُعدَّل يدوياً: {$this->additionalBalanceDays} يوم",
-                        'created_by'       => auth()->id(),
-                    ]);
+                    DB::transaction(function () use ($balance, $target, $diff) {
+                        $balance = LeaveBalance::lockForUpdate()->findOrFail($balance->id);
 
-                    $balance->increment('carried_over', $this->additionalBalanceDays);
-                });
+                        LeaveBalanceTransaction::create([
+                            'leave_balance_id' => $balance->id,
+                            'type'             => TransactionType::CARRYOVER,
+                            'days'             => $diff,
+                            'note'             => "تعديل الرصيد المُرحَّل إلى: {$target} يوم",
+                            'created_by'       => auth()->id(),
+                        ]);
+
+                        $balance->update(['carried_over' => $target]);
+                    });
+                }
             }
         }
     }
