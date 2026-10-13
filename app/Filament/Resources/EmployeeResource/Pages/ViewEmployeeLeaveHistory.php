@@ -112,22 +112,8 @@ class ViewEmployeeLeaveHistory extends Page
         // ------- Employee info -------
         $startDate   = $employee->work_start_date ?? $employee->hire_date;
 
-        $serviceLabel = '—';
-        if ($startDate) {
-            $diff = Carbon::parse($startDate)->diff(now());
-            $parts = [];
-            if ($diff->y > 0) {
-                $parts[] = $diff->y . ' ' . ($diff->y === 1 ? 'سنة' : 'سنوات');
-            }
-            if ($diff->m > 0) {
-                $parts[] = $diff->m . ' ' . ($diff->m === 1 ? 'شهر' : 'أشهر');
-            }
-            if ($diff->d > 0) {
-                $parts[] = $diff->d . ' ' . ($diff->d === 1 ? 'يوم' : 'يوم');
-            }
-            $serviceLabel = $parts ? implode(' و ', $parts) : 'أقل من يوم';
-        }
-        $serviceYears = $startDate ? Carbon::parse($startDate)->diffInYears(now()) : 0;
+        $serviceLabel = $employee->service_duration_label;
+        $serviceYears = $startDate ? (int) Carbon::parse($startDate)->diffInYears(now()) : 0;
 
         $this->employeeInfo = [
             'full_name'           => $employee->full_name,

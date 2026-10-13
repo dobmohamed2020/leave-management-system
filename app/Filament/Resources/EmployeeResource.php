@@ -593,12 +593,8 @@ class EmployeeResource extends Resource
                                             ->placeholder('—'),
 
                                         Infolists\Components\TextEntry::make('years_of_service')
-                                            ->label('سنوات الخدمة')
-                                            ->state(fn (Employee $record): string => (function () use ($record) {
-                                                $start = $record->work_start_date ?? $record->hire_date;
-                                                if (! $start) return '—';
-                                                return \Carbon\Carbon::parse($start)->diffInYears(now()) . ' سنة';
-                                            })()),
+                                            ->label('سنوات الخدمة (الخبرة)')
+                                            ->state(fn (Employee $record): string => $record->service_duration_label),
                                     ]),
                             ]),
 

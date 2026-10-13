@@ -20,8 +20,8 @@ class StoreLeaveRequestRequest extends FormRequest
             'end_date'               => ['required', 'date', 'after_or_equal:start_date'],
             'days'                   => ['required', 'integer', 'min:1', 'max:365'],
             'written_at'             => ['nullable', 'date'],
-            'reason'                 => ['required', 'string', 'min:5', 'max:500'],
-            'substitute_employee_id' => ['required', 'integer', 'exists:employees,id', 'different:employee_id'],
+            'reason'                 => ['nullable', 'string', 'max:500'],
+            'substitute_employee_id' => ['nullable', 'integer', 'exists:employees,id', 'different:employee_id'],
         ];
     }
 

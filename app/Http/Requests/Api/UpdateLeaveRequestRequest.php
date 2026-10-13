@@ -22,8 +22,8 @@ class UpdateLeaveRequestRequest extends FormRequest
             'end_date'               => ['nullable', 'date', 'after_or_equal:start_date'],
             'days'                   => ['nullable', 'integer', 'min:1', 'max:365'],
             'written_at'             => ['nullable', 'date'],
-            'reason'                 => ['sometimes', 'required', 'string', 'min:5', 'max:500'],
-            'substitute_employee_id' => ['sometimes', 'required', 'integer', 'exists:employees,id'],
+            'reason'                 => ['nullable', 'string', 'max:500'],
+            'substitute_employee_id' => ['nullable', 'integer', 'exists:employees,id'],
         ];
     }
 

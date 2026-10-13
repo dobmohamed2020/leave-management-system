@@ -108,38 +108,29 @@ class LeaveRequestService
             $warnings[] = $casualRule->warning;
         }
 
-        // ---- Substitute + reason (required for printable form) ----
+        // ---- Substitute (optional) + reason (optional) ----
         $substituteId = $data['substitute_employee_id'] ?? null;
-        if (empty($substituteId)) {
-            throw ValidationException::withMessages([
-                'substitute_employee_id' => 'يجب تحديد الموظف البديل (القائم بالعمل أثناء الإجازة).',
-            ]);
+        if (! empty($substituteId)) {
+            if ((int) $substituteId === (int) $employee->id) {
+                throw ValidationException::withMessages([
+                    'substitute_employee_id' => 'لا يمكن أن يكون الموظف البديل هو نفس طالب الإجازة.',
+                ]);
+            }
+
+            $substituteExists = Employee::withoutGlobalScopes()
+                ->whereNull('deleted_at')
+                ->whereKey($substituteId)
+                ->exists();
+
+            if (! $substituteExists) {
+                throw ValidationException::withMessages([
+                    'substitute_employee_id' => 'الموظف البديل المحدد غير موجود أو تم حذفه.',
+                ]);
+            }
         }
 
-        if ((int) $substituteId === (int) $employee->id) {
-            throw ValidationException::withMessages([
-                'substitute_employee_id' => 'لا يمكن أن يكون الموظف البديل هو نفس طالب الإجازة.',
-            ]);
-        }
-
-        $substituteExists = Employee::withoutGlobalScopes()
-            ->whereNull('deleted_at')
-            ->whereKey($substituteId)
-            ->exists();
-
-        if (! $substituteExists) {
-            throw ValidationException::withMessages([
-                'substitute_employee_id' => 'الموظف البديل المحدد غير موجود أو تم حذفه.',
-            ]);
-        }
-
-        $reason = trim((string) ($data['reason'] ?? ''));
-        if (mb_strlen($reason) < 5) {
-            throw ValidationException::withMessages([
-                'reason' => 'سبب طلب الإجازة مطلوب ولا يقل عن 5 أحرف.',
-            ]);
-        }
-        $data['reason'] = $reason;
+        $reason = isset($data['reason']) ? trim((string) $data['reason']) : null;
+        $data['reason'] = ($reason !== '') ? $reason : null;
 
         // ---- Persist ----
         $request = DB::transaction(function () use ($data, $createdBy, $employee) {

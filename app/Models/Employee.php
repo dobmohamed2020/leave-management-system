@@ -171,4 +171,25 @@ class Employee extends Model
 
         return (int) (EntitlementGrade::findByCode($this->entitlement_grade)?->yearly_days ?? 28);
     }
+
+    /**
+     * حساب مدة الخدمة / سنوات الخبرة معبراً عنها بـ (سنة، شهر، يوم).
+     */
+    public function getServiceDurationLabelAttribute(): string
+    {
+        $startDate = $this->work_start_date ?? $this->hire_date;
+        if (! $startDate) {
+            return '—';
+        }
+
+        $start = \Carbon\Carbon::parse($startDate);
+        if ($start->isFuture()) {
+            return '0 سنة و 0 شهر و 0 يوم';
+        }
+
+        $diff = $start->diff(now());
+
+        return "{$diff->y} سنة و {$diff->m} شهر و {$diff->d} يوم";
+    }
 }
+

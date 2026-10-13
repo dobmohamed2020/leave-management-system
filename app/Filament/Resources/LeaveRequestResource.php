@@ -122,16 +122,15 @@ class LeaveRequestResource extends Resource
                             );
                         })
                         ->searchable()
-                        ->required()
-                        ->helperText('مطلوب — الموظف الذي سيقوم بالعمل أثناء فترة الإجازة.'),
+                        ->nullable()
+                        ->helperText('اختياري — الموظف الذي سيقوم بالعمل أثناء فترة الإجازة إن وُجد.'),
 
                     Forms\Components\Textarea::make('reason')
                         ->label('السبب')
-                        ->required()
-                        ->minLength(5)
+                        ->nullable()
                         ->maxLength(500)
                         ->columnSpanFull()
-                        ->helperText('اكتب سبب طلب الإجازة بوضوح (5 أحرف على الأقل).'),
+                        ->helperText('اختياري — اكتب سبب طلب الإجازة إن وُجد.'),
                 ])
                 ->columns(2),
 
@@ -222,6 +221,10 @@ class LeaveRequestResource extends Resource
                         ->badge()
                         ->formatStateUsing(fn ($state, LeaveRequest $record): string => $record->displayStatusLabel())
                         ->color(fn ($state, LeaveRequest $record): string => $record->displayStatusColor()),
+
+                    Infolists\Components\TextEntry::make('substituteEmployee.full_name')
+                        ->label('الموظف البديل (القائم بالعمل)')
+                        ->placeholder('—'),
 
                     Infolists\Components\TextEntry::make('current_stage')
                         ->label('المرحلة الحالية')
