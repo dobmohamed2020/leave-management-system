@@ -18,6 +18,25 @@ class Employee extends Model
     protected static function booted(): void
     {
         static::addGlobalScope(new OrganizationScope());
+
+        static::saved(function (Employee $employee) {
+            if ($employee->promotion_date && ($employee->grade || $employee->entitlement_grade)) {
+                $exists = $employee->promotions()
+                    ->where('promotion_date', $employee->promotion_date->format('Y-m-d'))
+                    ->exists();
+
+                if (! $exists) {
+                    $employee->promotions()->create([
+                        'grade'             => $employee->grade ?? $employee->entitlementGrade?->name ?? 'غير محددة',
+                        'entitlement_grade' => $employee->entitlement_grade,
+                        'promotion_date'    => $employee->promotion_date,
+                        'decision_number'   => $employee->promotion_decision_number,
+                        'notes'             => 'تم الحفظ من ملف الموظف',
+                        'created_by'        => auth()->id(),
+                    ]);
+                }
+            }
+        });
     }
 
     protected $fillable = [
@@ -29,6 +48,8 @@ class Employee extends Model
         'approval_role',
         'grade',
         'entitlement_grade',
+        'promotion_date',
+        'promotion_decision_number',
         'birth_date',
         'hire_date',
         'work_start_date',
@@ -56,6 +77,7 @@ class Employee extends Model
         'birth_date'      => 'date',
         'hire_date'       => 'date',
         'work_start_date' => 'date',
+        'promotion_date'  => 'date',
         'is_active'       => 'boolean',
         'approval_role'   => \App\Enums\ApprovalRole::class,
         // entitlement_grade is a string code referencing entitlement_grades.code
@@ -108,6 +130,50 @@ class Employee extends Model
     public function leaveRequests(): HasMany
     {
         return $this->hasMany(LeaveRequest::class);
+    }
+
+    /** سجل الترقيات والتدرج الوظيفي */
+    public function promotions(): HasMany
+    {
+        return $this->hasMany(EmployeePromotion::class)->orderByDesc('promotion_date');
+    }
+
+    /** آخر ترقية مسجلة للموظف */
+    public function lastPromotion(): ?EmployeePromotion
+    {
+        return $this->promotions()->first();
+    }
+
+    /**
+     * تسجيل ترقية جديدة للموظف وتحديث بيانات الدرجة الحالية تلقائياً.
+     */
+    public function recordPromotion(
+        string $grade,
+        ?string $entitlementGrade = null,
+        $promotionDate = null,
+        ?string $decisionNumber = null,
+        ?string $notes = null,
+        ?int $userId = null
+    ): EmployeePromotion {
+        $promoDate = $promotionDate ? \Carbon\Carbon::parse($promotionDate) : now();
+
+        $promo = $this->promotions()->create([
+            'grade'             => $grade,
+            'entitlement_grade' => $entitlementGrade ?? $this->entitlement_grade,
+            'promotion_date'    => $promoDate,
+            'decision_number'   => $decisionNumber,
+            'notes'             => $notes,
+            'created_by'        => $userId ?? auth()->id(),
+        ]);
+
+        $this->update([
+            'grade'                     => $grade,
+            'entitlement_grade'         => $entitlementGrade ?? $this->entitlement_grade,
+            'promotion_date'            => $promoDate,
+            'promotion_decision_number' => $decisionNumber,
+        ]);
+
+        return $promo;
     }
 
     // -------------------------------------------------------------------------
