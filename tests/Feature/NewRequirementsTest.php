@@ -453,10 +453,20 @@ it('verifies Point 11: department manager (مدير الإدارة) can restore 
     $schoolUser = $ctx['schoolUser'];
 
     // Assign role 'مدير الإدارة' to adminUser and 'مدير مدرسة' to schoolUser
-    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
-    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير مدرسة', 'guard_name' => 'web']);
-    $adminUser->assignRole('مدير الإدارة');
-    $schoolUser->assignRole('مدير مدرسة');
+    $adminRole = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'مدير الإدارة',
+        'organization_id' => $ctx['adminOrg']->id,
+        'guard_name'      => 'web',
+    ]);
+    $schoolRole = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'مدير مدرسة',
+        'organization_id' => $ctx['school']->id,
+        'guard_name'      => 'web',
+    ]);
+    $adminUser->setOrganizationTeam();
+    $adminUser->assignRole($adminRole);
+    $schoolUser->setOrganizationTeam();
+    $schoolUser->assignRole($schoolRole);
 
     // Soft delete employee
     $employee->delete();
@@ -482,10 +492,20 @@ it('verifies Point 12: department manager (مدير الإدارة) can restore 
     $schoolUser = $ctx['schoolUser'];
     $regularType = $ctx['regularType'];
 
-    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
-    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير مدرسة', 'guard_name' => 'web']);
-    $adminUser->assignRole('مدير الإدارة');
-    $schoolUser->assignRole('مدير مدرسة');
+    $adminRole = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'مدير الإدارة',
+        'organization_id' => $ctx['adminOrg']->id,
+        'guard_name'      => 'web',
+    ]);
+    $schoolRole = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'مدير مدرسة',
+        'organization_id' => $ctx['school']->id,
+        'guard_name'      => 'web',
+    ]);
+    $adminUser->setOrganizationTeam();
+    $adminUser->assignRole($adminRole);
+    $schoolUser->setOrganizationTeam();
+    $schoolUser->assignRole($schoolRole);
 
     $request = LeaveRequest::create([
         'employee_id'     => $employee->id,
@@ -522,8 +542,13 @@ it('verifies Point 13: restore from normal deletion in DeletionRequest updates r
     $adminUser = $ctx['adminUser'];
     $schoolUser = $ctx['schoolUser'];
 
-    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
-    $adminUser->assignRole('مدير الإدارة');
+    $adminRole = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'مدير الإدارة',
+        'organization_id' => $ctx['adminOrg']->id,
+        'guard_name'      => 'web',
+    ]);
+    $adminUser->setOrganizationTeam();
+    $adminUser->assignRole($adminRole);
 
     // 1. Create a deletion request approved as soft_delete
     $employee->delete();

@@ -86,11 +86,11 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
             return true;
         }
 
-        return $user->hasPermissionTo('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
+        return $user->can('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
     }
 
     /**
@@ -100,11 +100,11 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
             return true;
         }
 
-        return $user->hasPermissionTo('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
+        return $user->can('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
     }
 
     /**

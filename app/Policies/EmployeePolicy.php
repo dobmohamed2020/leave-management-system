@@ -67,11 +67,11 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
             return true;
         }
 
-        return $user->hasPermissionTo('delete_employee') && ! ($user->organization?->isSchool() ?? false);
+        return $user->can('delete_employee') && ! ($user->organization?->isSchool() ?? false);
     }
 
     /**
@@ -81,10 +81,10 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
             return true;
         }
 
-        return $user->hasPermissionTo('delete_employee') && ! ($user->organization?->isSchool() ?? false);
+        return $user->can('delete_employee') && ! ($user->organization?->isSchool() ?? false);
     }
 }
