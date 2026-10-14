@@ -61,12 +61,19 @@ class AdminPanelProvider extends PanelProvider
                     ->url(fn (): string => \App\Filament\Resources\UserResource\Pages\CreateUser::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.users.create'))
                     ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\User::class)),
-                NavigationItem::make('طلب إجازة جديدة')
+                NavigationItem::make('طلب إجازة اعتيادية')
                     ->icon('heroicon-o-document-plus')
                     ->group('طلبات الإجازات')
                     ->sort(0)
                     ->url(fn (): string => \App\Filament\Resources\LeaveRequestResource\Pages\CreateLeaveRequest::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.leave-requests.create'))
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\LeaveRequest::class)),
+                NavigationItem::make('طلب إجازة من رصيد مرحل')
+                    ->icon('heroicon-o-archive-box-arrow-down')
+                    ->group('طلبات الإجازات')
+                    ->sort(1)
+                    ->url(fn (): string => \App\Filament\Resources\LeaveRequestResource\Pages\CreateCarriedLeaveRequest::getUrl())
+                    ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.leave-requests.create-carried'))
                     ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\LeaveRequest::class)),
                 NavigationItem::make('إضافة موظف')
                     ->icon('heroicon-o-user-plus')

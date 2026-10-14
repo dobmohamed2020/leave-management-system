@@ -8,7 +8,7 @@ return [
     | When true, a request with insufficient leave balance is allowed through
     | with a warning rather than being blocked outright.
     */
-    'warn_only_insufficient_balance' => true,
+    'warn_only_insufficient_balance' => false,
 
     /*
     |--------------------------------------------------------------------------

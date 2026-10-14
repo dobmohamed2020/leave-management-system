@@ -60,6 +60,40 @@ class LeaveRequestService
         );
         $deductFromCarried = (bool) ($data['deduct_from_carried'] ?? false);
 
+        if ($deductFromCarried && ! $leaveType->isRegular()) {
+            throw ValidationException::withMessages([
+                'leave_type_id' => 'خصم الإجازة من الرصيد المُرحَّل متاح فقط للإجازات الاعتيادية.',
+            ]);
+        }
+
+        // ---- Date validations ----
+        if (empty($data['start_date'])) {
+            throw ValidationException::withMessages([
+                'start_date' => 'تاريخ البداية مطلوب.',
+            ]);
+        }
+
+        $startDate = \Carbon\Carbon::parse($data['start_date'])->startOfDay();
+        $allowPastDates = (bool) ($data['allow_past_dates'] ?? false);
+        if (! $allowPastDates && $startDate->isPast() && ! $startDate->isToday()) {
+            throw ValidationException::withMessages([
+                'start_date' => 'لا يمكن تقديم طلب إجازة بتاريخ قديم في الماضي.',
+            ]);
+        }
+
+        if (empty($data['end_date'])) {
+            throw ValidationException::withMessages([
+                'end_date' => 'تاريخ النهاية مطلوب.',
+            ]);
+        }
+
+        $endDate = \Carbon\Carbon::parse($data['end_date'])->startOfDay();
+        if ($endDate->lt($startDate)) {
+            throw ValidationException::withMessages([
+                'end_date' => 'تاريخ النهاية يجب أن يكون في نفس تاريخ البداية أو بعده.',
+            ]);
+        }
+
         $warnings = [];
 
         // ---- Working days calculation ----
@@ -72,7 +106,13 @@ class LeaveRequestService
         } elseif (empty($data['days']) || (int) $data['days'] <= 0) {
             throw ValidationException::withMessages([
                 'start_date' => 'لا توجد أيام عمل في الفترة المحددة (عطلة أسبوعية أو إجازة رسمية). اختر تواريخاً أخرى.',
-                'days'       => 'عدد الأيام يجب أن يكون أكبر من صفر.',
+                'days'       => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
+            ]);
+        }
+
+        if ((int) $data['days'] < 1) {
+            throw ValidationException::withMessages([
+                'days' => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
             ]);
         }
 
@@ -105,7 +145,7 @@ class LeaveRequestService
         }
 
         // ---- Casual before regular ----
-        $casualRule = new CasualBeforeRegularRule($employee, $leaveType, $year);
+        $casualRule = new CasualBeforeRegularRule($employee, $leaveType, $fiscalYear);
         $casualRule->validate('days', $data['days'], fn($msg) => null);
         if ($casualRule->warning) {
             $warnings[] = $casualRule->warning;
@@ -136,7 +176,7 @@ class LeaveRequestService
         $data['reason'] = ($reason !== '') ? $reason : null;
 
         // ---- Persist ----
-        $request = DB::transaction(function () use ($data, $createdBy, $employee) {
+        $request = DB::transaction(function () use ($data, $createdBy, $employee, $deductFromCarried) {
             return LeaveRequest::create([
                 'employee_id'            => $employee->id,
                 'organization_id'        => $employee->organization_id,

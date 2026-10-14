@@ -316,3 +316,94 @@ it('verifies Point 5: school deletion request workflow', function () {
     expect($delReq->isApproved())->toBeTrue()
         ->and($employee->fresh()->trashed())->toBeTrue();
 });
+
+it('verifies Point 6: rejects leave request with past date', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+    $regularType = $ctx['regularType'];
+
+    $service = app(LeaveRequestService::class);
+
+    expect(function () use ($service, $employee, $adminUser, $regularType) {
+        $service->create([
+            'employee_id'   => $employee->id,
+            'leave_type_id' => $regularType->id,
+            'start_date'    => now()->subDays(2)->toDateString(),
+            'end_date'      => now()->subDay()->toDateString(),
+            'days'          => 2,
+        ], $adminUser);
+    })->toThrow(\Illuminate\Validation\ValidationException::class);
+});
+
+it('verifies Point 7: rejects leave request when exceeding remaining balance (annual and carried)', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+    $regularType = $ctx['regularType'];
+    $fiscalYear = app(FiscalYearService::class)->currentFiscalYear();
+
+    // 5 annual, 3 carried
+    LeaveBalance::updateOrCreate(
+        [
+            'employee_id'   => $employee->id,
+            'leave_type_id' => $regularType->id,
+            'year'          => $fiscalYear,
+        ],
+        [
+            'entitled'      => 5,
+            'carried_over'  => 3,
+            'used'          => 0,
+            'used_carried'  => 0,
+        ]
+    );
+
+    $service = app(LeaveRequestService::class);
+
+    // 1. Regular leave requesting 6 days (more than 5 entitled) must fail!
+    expect(function () use ($service, $employee, $adminUser, $regularType) {
+        $service->create([
+            'employee_id'         => $employee->id,
+            'leave_type_id'       => $regularType->id,
+            'deduct_from_carried' => false,
+            'start_date'          => now()->addDays(2)->toDateString(),
+            'end_date'            => now()->addDays(7)->toDateString(),
+            'days'                => 6,
+        ], $adminUser);
+    })->toThrow(\Illuminate\Validation\ValidationException::class);
+
+    // 2. Carried leave requesting 4 days (more than 3 carried) must fail!
+    expect(function () use ($service, $employee, $adminUser, $regularType) {
+        $service->create([
+            'employee_id'         => $employee->id,
+            'leave_type_id'       => $regularType->id,
+            'deduct_from_carried' => true,
+            'start_date'          => now()->addDays(10)->toDateString(),
+            'end_date'            => now()->addDays(13)->toDateString(),
+            'days'                => 4,
+        ], $adminUser);
+    })->toThrow(\Illuminate\Validation\ValidationException::class);
+
+    // 3. Requesting within balance must succeed!
+    $validRequest = $service->create([
+        'employee_id'         => $employee->id,
+        'leave_type_id'       => $regularType->id,
+        'deduct_from_carried' => true,
+        'start_date'          => now()->addDays(15)->toDateString(),
+        'end_date'            => now()->addDays(17)->toDateString(),
+        'days'                => 3,
+    ], $adminUser);
+
+    expect($validRequest->request)->not->toBeNull()
+        ->and($validRequest->request->deduct_from_carried)->toBeTrue()
+        ->and((int) $validRequest->request->days)->toBe(3);
+});
+
+it('verifies Point 8: separate routes and pages exist for regular vs carried leave requests', function () {
+    $pages = \App\Filament\Resources\LeaveRequestResource::getPages();
+
+    expect($pages)->toHaveKeys(['index', 'create', 'create-carried', 'edit', 'view']);
+    expect($pages['create']->getPage())->toBe(\App\Filament\Resources\LeaveRequestResource\Pages\CreateLeaveRequest::class);
+    expect($pages['create-carried']->getPage())->toBe(\App\Filament\Resources\LeaveRequestResource\Pages\CreateCarriedLeaveRequest::class);
+});
+

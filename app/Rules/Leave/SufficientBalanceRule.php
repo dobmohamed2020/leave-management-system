@@ -52,13 +52,13 @@ class SufficientBalanceRule implements ValidationRule
         }
 
         $msg = sprintf(
-            '%s المتبقي (%.1f يوم) أقل من المطلوب (%.1f يوم).',
+            'رصيد %s المتبقي (%.1f يوم) لا يكفي لتغطية عدد الأيام المطلوب (%.1f يوم). لا يمكن تجاوز الرصيد المتبقي.',
             $balanceName,
             $remaining,
             $requested
         );
 
-        if (config('leave.warn_only_insufficient_balance', true)) {
+        if (config('leave.warn_only_insufficient_balance', false)) {
             $this->warning = $msg . ' سيستمر الطلب مع الإشارة إلى النقص.';
         } else {
             $fail($msg);

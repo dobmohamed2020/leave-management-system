@@ -18,11 +18,16 @@ class CreateLeaveRequest extends CreateRecord
 {
     protected static string $resource = LeaveRequestResource::class;
 
+    protected static ?string $title = 'إضافة طلب إجازة';
+    protected static ?string $breadcrumb = 'طلب إجازة';
+
     /**
      * تجاوز عملية الإنشاء الافتراضية للاستفادة من LeaveRequestService.
      */
     protected function handleRecordCreation(array $data): LeaveRequest
     {
+        $data['deduct_from_carried'] = false;
+
         try {
             $result = app(LeaveRequestService::class)->create($data, Auth::user());
         } catch (ValidationException $e) {

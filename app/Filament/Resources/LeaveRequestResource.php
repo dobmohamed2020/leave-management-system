@@ -82,40 +82,54 @@ class LeaveRequestResource extends Resource
                         ->required()
                         ->reactive(),
 
-                    Forms\Components\Radio::make('deduct_from_carried')
-                        ->label('الخصم من الرصيد')
-                        ->options(function (Forms\Get $get): array {
-                            $employeeId = $get('employee_id');
-                            if (! $employeeId) {
-                                return [
-                                    0 => 'رصيد السنة الحالية',
-                                    1 => 'الرصيد المُرحَّل (سنوات سابقة)',
-                                ];
-                            }
-                            $emp = Employee::withoutGlobalScopes()->find($employeeId);
-                            $regType = LeaveType::where('code', 'regular')->first();
-                            $bal = $emp && $regType ? $emp->balanceFor($regType->id) : null;
-                            $remAnnual = $bal ? $bal->remaining_entitled : 0;
-                            $remCarried = $bal ? $bal->remaining_carried : 0;
-
-                            return [
-                                0 => "رصيد السنة الحالية (المتاح: {$remAnnual} يوم)",
-                                1 => "الرصيد المُرحَّل (المتاح: {$remCarried} يوم)",
-                            ];
-                        })
+                    Forms\Components\Hidden::make('deduct_from_carried')
                         ->default(0)
-                        ->boolean()
-                        ->visible(function (Forms\Get $get): bool {
+                        ->dehydrated(),
+
+                    Forms\Components\Placeholder::make('balance_info')
+                        ->label('حالة الرصيد المتاح')
+                        ->content(function (Forms\Get $get): \Illuminate\Support\HtmlString {
+                            $employeeId = $get('employee_id');
                             $leaveTypeId = $get('leave_type_id');
-                            if (! $leaveTypeId) return false;
-                            $type = LeaveType::find($leaveTypeId);
-                            return $type && $type->isRegular();
+                            if (! $employeeId) {
+                                return new \Illuminate\Support\HtmlString('<span class="text-gray-400 text-sm">اختر الموظف ونوع الإجازة لعرض الرصيد</span>');
+                            }
+
+                            $emp = Employee::withoutGlobalScopes()->find($employeeId);
+                            $type = $leaveTypeId ? LeaveType::find($leaveTypeId) : null;
+                            if (! $emp || ! $type) {
+                                return new \Illuminate\Support\HtmlString('—');
+                            }
+
+                            if (! $type->deducts_balance) {
+                                return new \Illuminate\Support\HtmlString('<span class="text-info-600 dark:text-info-400 text-sm font-medium">هذا النوع من الإجازات لا يخصم من الرصيد.</span>');
+                            }
+
+                            $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+                            $bal = $emp->balanceFor($type->id, $fiscalYear);
+                            $entitled = $bal ? (int) $bal->entitled : 0;
+                            $used = $bal ? (int) $bal->used : 0;
+                            $rem = $bal ? (int) $bal->remaining_entitled : 0;
+                            $color = $rem > 0 ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400';
+
+                            return new \Illuminate\Support\HtmlString("
+                                <div class='flex flex-wrap gap-4 text-sm font-medium p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'>
+                                    <div>رصيد السنة الحالية المستحق: <span class='font-bold'>{$entitled}</span> يوم</div>
+                                    <div>المُستخدم: <span class='font-bold'>{$used}</span> يوم</div>
+                                    <div>المتبقي: <span class='font-bold {$color}'>{$rem} يوم</span></div>
+                                </div>
+                            ");
                         })
-                        ->helperText('اختر جهة الخصم: رصيد السنة الحالية أم الرصيد المُرحَّل.'),
+                        ->columnSpanFull(),
 
                     Forms\Components\DatePicker::make('start_date')
                         ->label('تاريخ البداية')
                         ->required()
+                        ->minDate(now()->startOfDay())
+                        ->rules(['after_or_equal:today'])
+                        ->validationMessages([
+                            'after_or_equal' => 'لا يمكن تقديم طلب إجازة بتاريخ قديم في الماضي.',
+                        ])
                         ->reactive()
                         ->afterStateUpdated(function (Forms\Get $get, Forms\Set $set) {
                             self::recalculateDays($get, $set);
@@ -124,6 +138,11 @@ class LeaveRequestResource extends Resource
                     Forms\Components\DatePicker::make('end_date')
                         ->label('تاريخ النهاية')
                         ->required()
+                        ->minDate(fn (Forms\Get $get) => $get('start_date') ?: now()->startOfDay())
+                        ->rules(['after_or_equal:start_date'])
+                        ->validationMessages([
+                            'after_or_equal' => 'تاريخ النهاية يجب أن يكون في نفس تاريخ البداية أو بعده.',
+                        ])
                         ->reactive()
                         ->afterStateUpdated(function (Forms\Get $get, Forms\Set $set) {
                             self::recalculateDays($get, $set);
@@ -137,7 +156,42 @@ class LeaveRequestResource extends Resource
                         ->disabled()
                         ->dehydrated()
                         ->required()
-                        ->helperText('يُحسب تلقائياً عند اختيار التواريخ، مع استثناء أيام الإجازة الرسمية والعطل الأسبوعية.'),
+                        ->rules([
+                            'min:1',
+                            fn (Forms\Get $get): \Closure => function (string $attribute, $value, \Closure $fail) use ($get) {
+                                $days = (int) $value;
+                                if ($days < 1) {
+                                    $fail('عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.');
+                                    return;
+                                }
+
+                                $employeeId = $get('employee_id');
+                                $leaveTypeId = $get('leave_type_id');
+                                if (! $employeeId || ! $leaveTypeId) {
+                                    return;
+                                }
+
+                                $employee = Employee::withoutGlobalScopes()->find($employeeId);
+                                $leaveType = LeaveType::find($leaveTypeId);
+                                if (! $employee || ! $leaveType || ! $leaveType->deducts_balance) {
+                                    return;
+                                }
+
+                                $fiscalYear = app(\App\Services\FiscalYearService::class)->fiscalYearFor(
+                                    $get('start_date') ? \Carbon\Carbon::parse($get('start_date')) : null
+                                );
+                                $balance = $employee->balanceFor($leaveType->id, $fiscalYear);
+                                $remaining = $balance ? (float) $balance->remaining_entitled : 0.0;
+
+                                if ($days > $remaining) {
+                                    $fail("عدد الأيام المطلوب ({$days} يوم) يتجاوز رصيد السنة الحالية المتبقي للموظف ({$remaining} يوم).");
+                                }
+                            },
+                        ])
+                        ->validationMessages([
+                            'min' => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
+                        ])
+                        ->helperText('يُحسب تلقائياً من التواريخ (يجب ألا يقل عن يوم واحد ولا يتعدى الرصيد المتبقي).'),
 
                     Forms\Components\DatePicker::make('written_at')
                         ->label('تاريخ كتابة الطلب')
@@ -459,6 +513,22 @@ class LeaveRequestResource extends Resource
                             ->when($data['from'], fn($q, $date) => $q->whereDate('start_date', '>=', $date))
                             ->when($data['to'],   fn($q, $date) => $q->whereDate('start_date', '<=', $date));
                     }),
+
+                Tables\Filters\SelectFilter::make('deduct_from_carried')
+                    ->label('جهة الخصم')
+                    ->options([
+                        '0' => 'رصيد السنة الحالية',
+                        '1' => 'الرصيد المُرحَّل (سنوات سابقة)',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (($data['value'] ?? null) === '0') {
+                            return $query->where('deduct_from_carried', false);
+                        }
+                        if (($data['value'] ?? null) === '1') {
+                            return $query->where('deduct_from_carried', true);
+                        }
+                        return $query;
+                    }),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
@@ -757,6 +827,41 @@ class LeaveRequestResource extends Resource
             ->all();
     }
 
+    /**
+     * Employees with their available carried-over balance.
+     *
+     * @return array<int|string, string>
+     */
+    public static function carriedEmployeeOptions(?int $excludeId = null): array
+    {
+        $user = Auth::user();
+
+        if (! $user?->organization_id) {
+            return [];
+        }
+
+        $orgIds = $user->organization?->subtreeIds() ?? [$user->organization_id];
+        $regularType = LeaveType::where('code', 'regular')->first();
+        $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+
+        $employees = Employee::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->active()
+            ->whereIn('organization_id', $orgIds)
+            ->when($excludeId, fn (Builder $q) => $q->where('id', '!=', $excludeId))
+            ->orderBy('full_name')
+            ->get();
+
+        $options = [];
+        foreach ($employees as $emp) {
+            $bal = $regularType ? $emp->balanceFor($regularType->id, $fiscalYear) : null;
+            $remCarried = $bal ? (int) $bal->remaining_carried : 0;
+            $options[$emp->id] = "{$emp->full_name} — (الرصيد المُرحَّل المتاح: {$remCarried} يوم)";
+        }
+
+        return $options;
+    }
+
     // -------------------------------------------------------------------------
     // Modify query for permission-aware scoping
     // -------------------------------------------------------------------------
@@ -795,10 +900,11 @@ class LeaveRequestResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListLeaveRequests::route('/'),
-            'create' => Pages\CreateLeaveRequest::route('/create'),
-            'edit'   => Pages\EditLeaveRequest::route('/{record}/edit'),
-            'view'   => Pages\ViewLeaveRequest::route('/{record}'),
+            'index'          => Pages\ListLeaveRequests::route('/'),
+            'create'         => Pages\CreateLeaveRequest::route('/create'),
+            'create-carried' => Pages\CreateCarriedLeaveRequest::route('/create-carried'),
+            'edit'           => Pages\EditLeaveRequest::route('/{record}/edit'),
+            'view'           => Pages\ViewLeaveRequest::route('/{record}'),
         ];
     }
 }

@@ -132,14 +132,44 @@ class EditLeaveRequest extends EditRecord
             $this->halt();
         }
 
-        // Sufficient balance (warn only — don't block, consistent with create behavior)
-        $balanceRule = new SufficientBalanceRule($employee, $leaveType, now()->year);
+        // Date in the past check
+        if (isset($updateData['start_date'])) {
+            $startDate = \Carbon\Carbon::parse($updateData['start_date'])->startOfDay();
+            if ($startDate->isPast() && ! $startDate->isToday()) {
+                Notification::make()
+                    ->title('تاريخ غير صحيح')
+                    ->body('لا يمكن اختيار تاريخ إجازة قديم في الماضي.')
+                    ->danger()
+                    ->send();
+
+                $this->halt();
+            }
+        }
+
+        // Minimum 1 day check
+        if ((int) ($updateData['days'] ?? 0) < 1) {
+            Notification::make()
+                ->title('عدد الأيام غير صحيح')
+                ->body('عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.')
+                ->danger()
+                ->send();
+
+            $this->halt();
+        }
+
+        // Sufficient balance (block if insufficient)
+        $fiscalYear = app(\App\Services\FiscalYearService::class)->fiscalYearFor(
+            isset($updateData['start_date']) ? \Carbon\Carbon::parse($updateData['start_date']) : null
+        );
+        $balanceRule = new SufficientBalanceRule($employee, $leaveType, $fiscalYear, (bool) $record->deduct_from_carried);
         $balanceRule->validate('days', $updateData['days'], function ($msg) {
             Notification::make()
-                ->title('تحذير: الرصيد غير كافٍ')
+                ->title('الرصيد غير كافٍ')
                 ->body($msg)
-                ->warning()
+                ->danger()
                 ->send();
+
+            $this->halt();
         });
 
         // Casual before regular warning

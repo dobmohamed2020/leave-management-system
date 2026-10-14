@@ -8,8 +8,9 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+// تشغيل الترحيل السنوي للأرصدة تلقائياً بنهاية السنة المالية في 30 يونيو (أو بداية 1 يوليو)
 Schedule::command('leave:year-end')
-    ->yearlyOn(1, 1, '00:01')
+    ->yearlyOn(6, 30, '23:59')
     ->withoutOverlapping()
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/year-end-rollover.log'));
