@@ -20,9 +20,13 @@ function createApiUser(?Organization $org = null): User
     $orgs = $org ? ['school' => $org] : createHierarchy();
     $school = $org ?? $orgs['school'];
 
-    return User::factory()->inOrganization($school)->create([
+    $user = User::factory()->inOrganization($school)->create([
         'password' => Hash::make('password123'),
     ]);
+
+    grantApiSchoolEmployeePermissions($user, $school);
+
+    return $user;
 }
 
 function setupApiScenario(): array
@@ -45,6 +49,8 @@ function setupApiScenario(): array
     $user = User::factory()->inOrganization($orgs['school'])->create([
         'password' => Hash::make('password123'),
     ]);
+
+    grantApiSchoolEmployeePermissions($user, $orgs['school']);
 
     LeaveBalance::create([
         'employee_id'   => $emp->id,
@@ -328,12 +334,29 @@ describe('API Leave Requests', function () {
             'end_date'               => now()->addDays(22)->toDateString(),
             'days'                   => 3,
         ], $ctx['user']);
-        $req  = $svc->submit($result->request, $ctx['user']);
-        $step = $req->steps()->where('stage', 'direct_manager')->first();
+        $req   = $svc->submit($result->request, $ctx['user']);
+        $step1 = $req->steps()->where('stage', 'direct_manager')->first();
+        $req   = $svc->approve($req, $step1, $ctx['user']);
 
-        $response = $this->actingAs($ctx['user'], 'sanctum')
+        $adminUser = User::factory()->inOrganization($ctx['orgs']['administration'])->create();
+        foreach (['reject_leave_request', 'approve_leave_request', 'view_leave_requests'] as $perm) {
+            \Spatie\Permission\Models\Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+        setPermissionsTeamId($ctx['orgs']['administration']->id);
+        $role = \Spatie\Permission\Models\Role::firstOrCreate([
+            'name'            => 'مسؤول الإجازات',
+            'guard_name'      => 'web',
+            'organization_id' => $ctx['orgs']['administration']->id,
+        ]);
+        $role->syncPermissions(['reject_leave_request', 'approve_leave_request', 'view_leave_requests']);
+        $adminUser->assignRole($role);
+        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+
+        $step2 = $req->steps()->where('stage', 'leaves_officer')->first();
+
+        $response = $this->actingAs($adminUser, 'sanctum')
                          ->postJson("/api/leave-requests/{$req->id}/reject", [
-                             'step_id' => $step->id,
+                             'step_id' => $step2->id,
                              'reason'  => 'يوجد ضغط عمل في هذه الفترة',
                          ]);
 

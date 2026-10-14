@@ -63,14 +63,14 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user()->load('organization');
+        $user = $request->user()->fresh()->load('organization');
         $user->setOrganizationTeam();
 
         return $this->success([
             'id'           => $user->id,
             'name'         => $user->name,
             'email'        => $user->email,
-            'phone'        => $user->phone,
+            'phone'        => $user->getAttribute('phone'),
             'organization' => $user->organization ? [
                 'id'         => $user->organization->id,
                 'name'       => $user->organization->name,

@@ -6,6 +6,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Auth\Access\AuthorizationException;
 use App\Exceptions\LeaveRequestException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -18,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
         $middleware->append(\App\Http\Middleware\NormalizeArabicNumbers::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\SetApiOrganizationTeam::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\EnsureApiUserOrganization::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         $exceptions->render(function (ValidationException $e, $request) {
@@ -42,6 +45,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (LeaveRequestException $e, $request) {
             if ($request->is('api/*')) {
                 return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
+        });
+        $exceptions->render(function (AuthorizationException $e, $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage() ?: 'غير مصرح لك بتنفيذ هذا الإجراء.',
+                ], 403);
             }
         });
     })->create();

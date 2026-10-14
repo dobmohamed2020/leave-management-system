@@ -27,7 +27,14 @@ class EmployeeReportService
      */
     public function getReportData(Employee $employee): array
     {
-        $employee->loadMissing(['organization', 'user', 'entitlementGrade', 'promotions.entitlementGrade', 'promotions.creator']);
+        $employee->loadMissing([
+            'organization',
+            'user',
+            'entitlementGrade',
+            'promotions.entitlementGrade',
+            'promotions.creator',
+            'carryoverRecords.leaveType',
+        ]);
 
         $currentFiscalYear = $this->fiscalYearService->currentFiscalYear();
         $fiscalYearLabel   = $this->fiscalYearService->label($currentFiscalYear);
@@ -47,6 +54,21 @@ class EmployeeReportService
         // 5. سجل العمليات والتدقيق والتعديلات (اي داتا اتعملت للموظف)
         $auditTrail = $this->buildAuditTrail($employee);
 
+        // 6. ملف الترحيلات (سنة، أيام، درجة الاستحقاق)
+        $carryoverFile = $employee->carryoverRecords
+            ->map(fn ($row) => [
+                'from_fiscal_year'  => $row->from_fiscal_year,
+                'to_fiscal_year'    => $row->to_fiscal_year,
+                'from_label'        => $this->fiscalYearService->label($row->from_fiscal_year),
+                'to_label'          => $this->fiscalYearService->label($row->to_fiscal_year),
+                'leave_type'        => $row->leaveType?->name,
+                'days_carried'      => $row->days_carried,
+                'entitlement_grade' => $row->entitlement_grade,
+                'source'            => $row->source,
+            ])
+            ->values()
+            ->all();
+
         return [
             'employee'          => $employee,
             'currentFiscalYear' => $currentFiscalYear,
@@ -56,6 +78,7 @@ class EmployeeReportService
             'balancesData'      => $balancesData,
             'requestsData'      => $requestsData,
             'auditTrail'        => $auditTrail,
+            'carryoverFile'     => $carryoverFile,
             'generatedAt'       => now(),
             'generatedBy'       => auth()->user()?->name ?? 'النظام',
         ];

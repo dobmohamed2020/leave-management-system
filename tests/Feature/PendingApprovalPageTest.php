@@ -310,7 +310,7 @@ it('LeaveRequestService returnRequest sets RETURNED status', function () {
     expect($returned->status)->toBe(LeaveStatus::RETURNED);
 });
 
-it('LeaveRequestService returnRequest does not throw for empty note (validation is in UI)', function () {
+it('LeaveRequestService returnRequest throws for empty note', function () {
     $orgs      = createHierarchy();
     $lt        = LeaveType::factory()->regular()->create();
     $emp       = Employee::factory()->inOrganization($orgs['school'])->create();
@@ -321,8 +321,6 @@ it('LeaveRequestService returnRequest does not throw for empty note (validation 
 
     $req      = makeSubmittedRequest($emp, $lt, 'direct_manager', $createdBy);
     $step     = $req->steps()->where('stage', 'direct_manager')->first();
-    $returned = app(LeaveRequestService::class)->returnRequest($req, $step, $approver, '');
-
-    // Service accepts empty note — the note minLength(5) requirement is enforced in the UI form
-    expect($returned->status)->toBe(LeaveStatus::RETURNED);
+    expect(fn () => app(LeaveRequestService::class)->returnRequest($req, $step, $approver, ''))
+        ->toThrow(LeaveRequestException::class);
 });

@@ -6,6 +6,7 @@ use App\Enums\TransactionType;
 use App\Models\Employee;
 use App\Models\LeaveBalance;
 use App\Models\LeaveBalanceTransaction;
+use App\Models\LeaveCarryoverRecord;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
 use App\Models\User;
@@ -167,18 +168,20 @@ class LeaveBalanceService
      * leave types of the given employee.
      * تجميع الرصيد المتبقي بنهاية السنة في 30-6 وإضافته إلى رصيد الموظف المُرحَّل للسنة الجديدة
      */
-    public function carryOver(Employee $employee, int $fromYear, int $toYear): void
-    {
+    public function carryOver(
+        Employee $employee,
+        int $fromYear,
+        int $toYear,
+        ?User $actedBy = null,
+        string $source = 'year_end'
+    ): void {
         $balances = LeaveBalance::with('leaveType')
             ->where('employee_id', $employee->id)
             ->where('year', $fromYear)
             ->get()
-            ->filter(fn(LeaveBalance $bal) =>
-                $bal->leaveType && $bal->leaveType->deducts_balance
-            );
+            ->filter(fn (LeaveBalance $bal) => $bal->leaveType && $bal->leaveType->deducts_balance);
 
         foreach ($balances as $bal) {
-            // المتبقي من رصيد السنة الاعتيادي المنتهية + المتبقي من المرحل غير المستهلك
             $remainingAnnual  = $bal->remaining_entitled;
             $remainingCarried = $bal->remaining_carried;
             $totalCarryDays   = $remainingAnnual + $remainingCarried;
@@ -190,29 +193,73 @@ class LeaveBalanceService
             $maxCarry  = config('leave.carry_over_max_days') ?? PHP_INT_MAX;
             $carryDays = min($totalCarryDays, $maxCarry);
 
-            $toBalance = $this->getOrCreateBalance($employee, $bal->leaveType, $toYear);
+            $alreadyRecorded = LeaveCarryoverRecord::query()
+                ->where('employee_id', $employee->id)
+                ->where('leave_type_id', $bal->leave_type_id)
+                ->where('from_fiscal_year', $fromYear)
+                ->where('to_fiscal_year', $toYear)
+                ->exists();
 
-            // حارس الإيدمبوتنسي: تخطّى إذا كان الرصيد المُرحَّل للسنة الجديدة مُعبَّأ مسبقاً
-            if ($toBalance->carried_over > 0) {
+            if ($alreadyRecorded) {
                 continue;
             }
 
-            DB::transaction(function () use ($toBalance, $carryDays, $bal, $fromYear) {
+            $toBalance = $this->getOrCreateBalance($employee, $bal->leaveType, $toYear);
+
+            DB::transaction(function () use ($toBalance, $carryDays, $bal, $fromYear, $toYear, $employee, $actedBy, $source) {
                 $toBalance = LeaveBalance::lockForUpdate()->findOrFail($toBalance->id);
 
-                LeaveBalanceTransaction::create([
+                $transaction = LeaveBalanceTransaction::create([
                     'leave_balance_id' => $toBalance->id,
                     'type'             => TransactionType::CARRYOVER,
                     'days'             => $carryDays,
                     'note'             => "ترحيل رصيد متبقي من سنة {$fromYear} المنتهية في 30-6",
+                    'created_by'       => $actedBy?->id,
                 ]);
 
                 $toBalance->update([
                     'carried_over' => $carryDays,
                     'used_carried' => 0,
                 ]);
+
+                $this->recordCarryoverLedger(
+                    $employee,
+                    $bal->leaveType,
+                    $fromYear,
+                    $toYear,
+                    $carryDays,
+                    $source,
+                    $transaction->id,
+                    $actedBy
+                );
             });
         }
+    }
+
+    /**
+     * سجل «ملف الترحيلات»: سنة، أيام، درجة الاستحقاق وقت الترحيل.
+     */
+    public function recordCarryoverLedger(
+        Employee $employee,
+        LeaveType $leaveType,
+        int $fromFiscalYear,
+        int $toFiscalYear,
+        int $daysCarried,
+        string $source,
+        ?int $transactionId = null,
+        ?User $actedBy = null
+    ): LeaveCarryoverRecord {
+        return LeaveCarryoverRecord::create([
+            'employee_id'                  => $employee->id,
+            'leave_type_id'                => $leaveType->id,
+            'from_fiscal_year'             => $fromFiscalYear,
+            'to_fiscal_year'               => $toFiscalYear,
+            'days_carried'                 => $daysCarried,
+            'entitlement_grade'            => $employee->entitlement_grade,
+            'source'                       => $source,
+            'leave_balance_transaction_id' => $transactionId,
+            'created_by'                   => $actedBy?->id,
+        ]);
     }
 
     /**

@@ -592,7 +592,7 @@ class LeaveRequestResource extends Resource
                     ->modalSubmitActionLabel('نعم، احذف نهائياً')
                     ->modalCancelActionLabel('إلغاء')
                     ->visible(fn (LeaveRequest $record): bool =>
-                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || Auth::user()?->hasPermissionTo('manage_organization'))
                     )
                     ->action(function (LeaveRequest $record): void {
@@ -644,7 +644,7 @@ class LeaveRequestResource extends Resource
                         $record->trashed() &&
                         ! (Auth::user()?->organization?->isSchool() ?? false) &&
                         (bool) (
-                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || Auth::user()?->hasPermissionTo('manage_organization')
                             || (Auth::user()?->can('restore', $record) ?? false)
                         )
@@ -839,7 +839,7 @@ class LeaveRequestResource extends Resource
                     ->visible(fn (): bool =>
                         ! (Auth::user()?->organization?->isSchool() ?? false) &&
                         (bool) (
-                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || Auth::user()?->hasPermissionTo('manage_organization')
                             || Auth::user()?->hasPermissionTo('delete_leave_request')
                         )

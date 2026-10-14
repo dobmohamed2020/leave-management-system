@@ -24,6 +24,9 @@ use App\Rules\Leave\WorkingDaysRule;
 use App\Services\LeaveBalanceService;
 use App\Services\LeaveRequestService;
 use Illuminate\Support\Facades\Notification;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 // =============================================================================
 // Helpers shared across Phase 2 tests
@@ -52,6 +55,26 @@ function setupPhase2(): array
         ->create(['full_name' => 'موظف بديل للاختبار']);
 
     $user = User::factory()->inOrganization($orgs['school'])->create();
+
+    $workflowPerms = [
+        'create_leave_request', 'edit_leave_request', 'submit_leave_request',
+        'approve_leave_request', 'reject_leave_request', 'return_leave_request',
+        'cancel_leave_request', 'view_leave_requests', 'view_employees',
+    ];
+    foreach ($workflowPerms as $perm) {
+        Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+    }
+    setPermissionsTeamId($orgs['school']->id);
+    foreach (['مدير مدرسة', 'مسؤول الإجازات', 'مدير الإدارة'] as $roleName) {
+        $role = Role::firstOrCreate([
+            'name'            => $roleName,
+            'guard_name'      => 'web',
+            'organization_id' => $orgs['school']->id,
+        ]);
+        $role->syncPermissions($workflowPerms);
+        $user->assignRole($role);
+    }
+    app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
     // Balances
     LeaveBalance::create([
@@ -276,31 +299,28 @@ describe('Validation Rules', function () {
 
     describe('WorkingDaysRule', function () {
 
-        it('excludes Fridays and Saturdays from count', function () {
-            // Week: Mon 1 → Sun 7 (includes Fri + Sat)
+        it('counts all calendar days inclusive (weekends included)', function () {
             $rule = new WorkingDaysRule();
             $rule->setData([
-                'start_date' => '2026-06-01', // Monday
-                'end_date'   => '2026-06-07', // Sunday
+                'start_date' => '2026-06-01',
+                'end_date'   => '2026-06-07',
             ]);
             $rule->validate('days', 7, fn($msg) => null);
 
-            // 7 days - 2 off days (Fri 5th + Sat 6th) = 5 working days
-            expect($rule->calculatedDays)->toBe(5);
+            expect($rule->calculatedDays)->toBe(7);
         });
 
-        it('excludes holidays from count', function () {
+        it('does not subtract holidays from calendar-day count', function () {
             Holiday::create(['date' => '2026-06-03', 'name' => 'إجازة رسمية']);
 
             $rule = new WorkingDaysRule();
             $rule->setData([
-                'start_date' => '2026-06-01', // Monday
-                'end_date'   => '2026-06-07', // Sunday
+                'start_date' => '2026-06-01',
+                'end_date'   => '2026-06-07',
             ]);
             $rule->validate('days', 7, fn($msg) => null);
 
-            // 5 working days - 1 holiday (Wed) = 4
-            expect($rule->calculatedDays)->toBe(4);
+            expect($rule->calculatedDays)->toBe(7);
         });
 
         it('returns correct count for a single working day', function () {
@@ -546,8 +566,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-09-01',
-            'end_date'      => '2026-09-03',
+            'start_date'    => now()->addDays(4)->toDateString(),
+            'end_date'      => now()->addDays(6)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 
@@ -566,12 +586,12 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-09-07',  // Monday
-            'end_date'      => '2026-09-13',  // Sunday
+            'start_date'    => now()->next('Monday')->toDateString(),
+            'end_date'      => now()->next('Monday')->addDays(6)->toDateString(),
             'days'          => 99,            // wrong — should be corrected to 5
         ], $ctx['user']);
 
-        expect((float) $result->request->days)->toBe(5.0);
+        expect((float) $result->request->days)->toBe(7.0);
     });
 
     it('submit builds workflow steps from WorkflowConfiguration', function () {
@@ -583,8 +603,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-10-01',
-            'end_date'      => '2026-10-03',
+            'start_date'    => now()->addDays(8)->toDateString(),
+            'end_date'      => now()->addDays(10)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 
@@ -604,8 +624,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-10-05',
-            'end_date'      => '2026-10-07',
+            'start_date'    => now()->addDays(3)->toDateString(),
+            'end_date'      => now()->addDays(5)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 
@@ -709,8 +729,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-09-15',
-            'end_date'      => '2026-09-17',
+            'start_date'    => now()->addDays(10)->toDateString(),
+            'end_date'      => now()->addDays(12)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 
@@ -736,8 +756,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-09-20',
-            'end_date'      => '2026-09-22',
+            'start_date'    => now()->addDays(15)->toDateString(),
+            'end_date'      => now()->addDays(17)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 
@@ -757,8 +777,8 @@ describe('LeaveRequestService lifecycle', function () {
             'substitute_employee_id' => $ctx['substitute']->id,
             'reason'             => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-10-10',
-            'end_date'      => '2026-10-12',
+            'start_date'    => now()->addDays(20)->toDateString(),
+            'end_date'      => now()->addDays(22)->toDateString(),
             'days'          => 3,
         ], $ctx['user']);
 

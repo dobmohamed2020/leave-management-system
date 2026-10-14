@@ -1,3 +1,29 @@
+## نظام إدارة الإجازات (Leave Management System)
+
+Laravel 11 + Filament 3 — السنة المالية من **1 يوليو** إلى **30 يونيو**.
+
+### التشغيل والاختبارات
+
+```bash
+composer install
+cp .env.example .env && php artisan key:generate
+php artisan migrate --seed
+./vendor/bin/pest
+```
+
+### الترحيل السنوي (30 يونيو)
+
+- أمر Artisan: `php artisan leave:year-end [--year=] [--dry-run]`
+- مجدول في `routes/console.php` (30 يونيو 23:59) — يتطلب cron: `* * * * * php /path/to/artisan schedule:run`
+- سجل «ملف الترحيلات»: جدول `leave_carryover_records` + عرض من صفحة الموظف في لوحة الإدارة
+- API: `GET /api/employees/{id}/carryover-records` (يتطلب صلاحية `view_employees`)
+
+### API
+
+مسارات `/api/*` محمية بـ Sanctum مع سياسات الصلاحيات (Spatie teams = `organization_id`).
+
+---
+
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
 <p align="center">

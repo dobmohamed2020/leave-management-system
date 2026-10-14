@@ -140,6 +140,12 @@ class Employee extends Model
         return $this->hasMany(EmployeePromotion::class)->orderByDesc('promotion_date');
     }
 
+    /** ملف الترحيلات السنوية */
+    public function carryoverRecords(): HasMany
+    {
+        return $this->hasMany(LeaveCarryoverRecord::class)->orderByDesc('to_fiscal_year');
+    }
+
     /** آخر ترقية مسجلة للموظف */
     public function lastPromotion(): ?EmployeePromotion
     {

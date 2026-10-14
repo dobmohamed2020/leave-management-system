@@ -20,6 +20,18 @@ class YearEndRolloverPage extends Page implements HasForms
     protected static ?int $navigationSort = 10;
     protected static string $view = 'filament.pages.year-end-rollover-page';
 
+    public static function canAccess(): bool
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        $user->setOrganizationTeam();
+
+        return $user->can('manage_organization');
+    }
+
     public ?array $data = [];
     public ?string $output = null;
 

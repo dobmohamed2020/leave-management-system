@@ -43,10 +43,7 @@ class StoreLeaveRequestRequest extends FormRequest
             'days.min'                        => 'الحد الأدنى لعدد الأيام هو يوم واحد.',
             'days.max'                        => 'الحد الأقصى لعدد الأيام هو 365 يوماً.',
             'written_at.date'                 => 'تاريخ التحرير غير صحيح.',
-            'reason.required'                 => 'سبب طلب الإجازة مطلوب.',
-            'reason.min'                      => 'سبب طلب الإجازة يجب ألا يقل عن 5 أحرف.',
             'reason.max'                      => 'السبب يجب ألا يتجاوز 500 حرف.',
-            'substitute_employee_id.required' => 'يجب تحديد الموظف البديل (القائم بالعمل أثناء الإجازة).',
             'substitute_employee_id.exists'   => 'الموظف البديل المحدد غير موجود.',
             'substitute_employee_id.different'=> 'لا يمكن أن يكون الموظف البديل هو نفس طالب الإجازة.',
         ];

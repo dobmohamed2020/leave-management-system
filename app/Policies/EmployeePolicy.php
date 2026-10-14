@@ -17,7 +17,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('view_employees');
+        return $user->hasPermissionSafe('view_employees');
     }
 
     /**
@@ -27,7 +27,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('view_employees');
+        return $user->hasPermissionSafe('view_employees');
     }
 
     /**
@@ -37,7 +37,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('create_employee');
+        return $user->hasPermissionSafe('create_employee');
     }
 
     /**
@@ -47,7 +47,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('edit_employee');
+        return $user->hasPermissionSafe('edit_employee');
     }
 
     /**
@@ -57,7 +57,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('delete_employee');
+        return $user->hasPermissionSafe('delete_employee');
     }
 
     /**
@@ -67,7 +67,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية']) || $user->can('manage_organization')) {
             return true;
         }
 
@@ -81,7 +81,7 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
-        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->can('manage_organization')) {
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية']) || $user->can('manage_organization')) {
             return true;
         }
 

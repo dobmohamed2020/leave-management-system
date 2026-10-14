@@ -15,6 +15,8 @@ class OrganizationController extends Controller
     // GET /api/organizations
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('browse', Organization::class);
+
         $query = Organization::with('parent')->latest();
 
         if ($type = $request->query('type')) {
@@ -41,6 +43,8 @@ class OrganizationController extends Controller
     // GET /api/organizations/{id}
     public function show(Organization $organization): JsonResponse
     {
+        $this->authorize('browse', Organization::class);
+
         $organization->load(['parent', 'children']);
         return $this->success(OrganizationResource::make($organization));
     }

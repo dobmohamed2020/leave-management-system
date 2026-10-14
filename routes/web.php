@@ -89,7 +89,23 @@ Route::get('/employee-report/{id}', function (int $id) {
 
 // Authenticated Excel export route
 Route::get('/leave-export', function (\Illuminate\Http\Request $request) {
+    $user = auth()->user();
+    $user->setOrganizationTeam();
+    \Illuminate\Support\Facades\Gate::authorize('export_reports');
+
     $filters = $request->only(['status', 'organization_id', 'employee_name', 'leave_type_id']);
+
+    if (! empty($filters['organization_id']) && $user->organization) {
+        $allowedIds = $user->organization->subtreeIds();
+        if (! in_array((int) $filters['organization_id'], $allowedIds, true)) {
+            abort(403, 'غير مصرح لك بتصدير بيانات هذه الجهة.');
+        }
+    } elseif ($user->organization) {
+        $filters['organization_id'] = $user->organization_id;
+    } elseif (! $user->can('manage_organization')) {
+        abort(403, 'غير مصرح لك بتصدير البيانات.');
+    }
+
     return \Maatwebsite\Excel\Facades\Excel::download(
         new \App\Exports\LeaveRequestsExport($filters),
         'leave-requests.xlsx'
@@ -98,6 +114,10 @@ Route::get('/leave-export', function (\Illuminate\Http\Request $request) {
 
 // Authenticated report PDF download route
 Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
+    $user = auth()->user();
+    $user->setOrganizationTeam();
+    \Illuminate\Support\Facades\Gate::authorize('view_reports');
+
     $filters = $request->only(['status', 'organization_id', 'leave_type_id', 'from', 'to']);
 
     // Enforce org-scope authorization: if an organization_id is supplied it must belong

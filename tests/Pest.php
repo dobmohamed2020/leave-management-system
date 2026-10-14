@@ -68,3 +68,39 @@ function createHierarchy(): array
         'school'         => $school->fresh(),
     ];
 }
+
+/**
+ * Grant school-employee API permissions (matches RoleAndPermissionSeeder school_employee).
+ */
+function grantApiSchoolEmployeePermissions(\App\Models\User $user, \App\Models\Organization $school): void
+{
+    $permissions = [
+        'create_leave_request',
+        'edit_leave_request',
+        'submit_leave_request',
+        'cancel_leave_request',
+        'delete_leave_request',
+        'view_leave_requests',
+        'view_employees',
+        'create_employee',
+        'edit_employee',
+        'delete_employee',
+    ];
+
+    foreach ($permissions as $perm) {
+        \Spatie\Permission\Models\Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+    }
+
+    setPermissionsTeamId($school->id);
+
+    $role = \Spatie\Permission\Models\Role::firstOrCreate([
+        'name'            => 'موظف مدرسة',
+        'guard_name'      => 'web',
+        'organization_id' => $school->id,
+    ]);
+
+    $role->syncPermissions($permissions);
+    $user->assignRole($role);
+
+    app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+}

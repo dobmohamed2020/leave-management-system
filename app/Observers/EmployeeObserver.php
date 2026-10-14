@@ -13,7 +13,8 @@ class EmployeeObserver
     public function created(Employee $employee): void
     {
         try {
-            $this->service->accrueAnnual($employee, now()->year);
+            $year = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+            $this->service->accrueAnnual($employee, $year);
         } catch (\Throwable $e) {
             Log::warning('Failed to initialize balance for new employee', [
                 'employee_id' => $employee->id,

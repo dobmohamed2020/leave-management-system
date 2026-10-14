@@ -7,6 +7,8 @@ use App\Filament\Resources\EmployeeResource;
 use App\Models\LeaveBalance;
 use App\Models\LeaveBalanceTransaction;
 use App\Models\LeaveType;
+use App\Models\User;
+use App\Services\LeaveBalanceService;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Support\Facades\DB;
@@ -91,11 +93,12 @@ class CreateEmployee extends CreateRecord
             } else {
                 // The observer has already run accrueAnnual(), so the balance row
                 // should exist. Use firstOrCreate as a safety net.
+                $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
                 $balance = LeaveBalance::firstOrCreate(
                     [
                         'employee_id'   => $this->record->id,
                         'leave_type_id' => $regularType->id,
-                        'year'          => now()->year,
+                        'year'          => $fiscalYear,
                     ],
                     [
                         'entitled'     => $this->record->regularLeaveEntitlement(),
@@ -104,10 +107,10 @@ class CreateEmployee extends CreateRecord
                     ]
                 );
 
-                DB::transaction(function () use ($balance) {
+                DB::transaction(function () use ($balance, $regularType, $fiscalYear) {
                     $balance = LeaveBalance::lockForUpdate()->findOrFail($balance->id);
 
-                    LeaveBalanceTransaction::create([
+                    $transaction = LeaveBalanceTransaction::create([
                         'leave_balance_id' => $balance->id,
                         'type'             => TransactionType::CARRYOVER,
                         'days'             => $this->initialBalanceDays,
@@ -116,6 +119,18 @@ class CreateEmployee extends CreateRecord
                     ]);
 
                     $balance->increment('carried_over', $this->initialBalanceDays);
+
+                    $actor = auth()->user();
+                    app(LeaveBalanceService::class)->recordCarryoverLedger(
+                        $this->record,
+                        $regularType,
+                        $fiscalYear - 1,
+                        $fiscalYear,
+                        $this->initialBalanceDays,
+                        'initial_balance',
+                        $transaction->id,
+                        $actor instanceof User ? $actor : null
+                    );
                 });
             }
         }

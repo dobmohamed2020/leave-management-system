@@ -211,6 +211,15 @@ it('verifies Point 2: 30-6 fiscal rollover carries over remaining unused days in
     expect($toBalance)->not->toBeNull()
         ->and($toBalance->carried_over)->toBe(23)
         ->and($toBalance->used_carried)->toBe(0);
+
+    $ledger = \App\Models\LeaveCarryoverRecord::where('employee_id', $employee->id)
+        ->where('from_fiscal_year', 2024)
+        ->where('to_fiscal_year', 2025)
+        ->first();
+
+    expect($ledger)->not->toBeNull()
+        ->and($ledger->days_carried)->toBe(23)
+        ->and($ledger->source)->toBe('year_end');
 });
 
 it('verifies Point 4: permanent cascade hard deletion cleanly cleans up employee and all relations', function () {

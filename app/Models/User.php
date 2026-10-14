@@ -12,6 +12,7 @@ use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable implements FilamentUser
@@ -157,16 +158,41 @@ class User extends Authenticatable implements FilamentUser
         }
     }
 
+    /**
+     * Run a callback with Spatie team context set for this user's organization.
+     */
+    public function withTeamContext(callable $callback): mixed
+    {
+        $this->setOrganizationTeam();
+
+        return $callback($this);
+    }
+
+    /**
+     * Check permission without throwing when the permission row is missing (e.g. fresh DB).
+     */
+    public function hasPermissionSafe(string $permission, ?string $guard = 'web'): bool
+    {
+        $this->setOrganizationTeam();
+
+        if (! Permission::where('name', $permission)->where('guard_name', $guard)->exists()) {
+            return false;
+        }
+
+        return $this->hasPermissionTo($permission, $guard);
+    }
+
     public function isAdmin(): bool
     {
         $this->setOrganizationTeam();
-        return $this->hasRole(['مدير', 'مدير مساعد', 'مدير إدارة', 'مدير عام']);
+
+        return $this->hasRole(['مدير المديرية', 'وكيل المديرية', 'مدير الإدارة'])
+            || $this->hasPermissionSafe('manage_organization');
     }
 
     public function canApproveLeave(): bool
     {
-        $this->setOrganizationTeam();
-        return $this->hasPermissionTo('approve_leave_request');
+        return $this->hasPermissionSafe('approve_leave_request');
     }
 
     // -------------------------------------------------------------------------

@@ -26,6 +26,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('employees', EmployeeController::class);
     Route::get('/employees/{employee}/balances', [EmployeeController::class, 'balances']);
+    Route::get('/employees/{employee}/carryover-records', [EmployeeController::class, 'carryoverRecords']);
 
     Route::apiResource('leave-types',   LeaveTypeController::class)->only(['index', 'show']);
     Route::apiResource('organizations', OrganizationController::class)->only(['index', 'show']);

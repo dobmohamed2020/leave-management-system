@@ -12,11 +12,6 @@ use App\Http\Requests\Api\UpdateLeaveRequestRequest;
 use App\Http\Resources\LeaveRequestResource;
 use App\Models\LeaveRequest;
 use App\Models\LeaveRequestStep;
-use App\Rules\Leave\CasualBeforeRegularRule;
-use App\Rules\Leave\MaxDaysPerRequestRule;
-use App\Rules\Leave\NoOverlapRule;
-use App\Rules\Leave\SufficientBalanceRule;
-use App\Rules\Leave\WorkingDaysRule;
 use App\Services\LeaveRequestService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +27,8 @@ class LeaveRequestController extends Controller
     // GET /api/leave-requests
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', LeaveRequest::class);
+
         $query = LeaveRequest::with(['employee', 'leaveType', 'organization'])
             ->latest();
 
@@ -62,6 +59,8 @@ class LeaveRequestController extends Controller
     // POST /api/leave-requests
     public function store(StoreLeaveRequestRequest $request): JsonResponse
     {
+        $this->authorize('create', LeaveRequest::class);
+
         try {
             $result = $this->service->create($request->validated(), $request->user());
             return $this->success(
@@ -79,6 +78,8 @@ class LeaveRequestController extends Controller
     // GET /api/leave-requests/{id}
     public function show(LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('view', $leaveRequest);
+
         $leaveRequest->load(['employee.organization', 'leaveType', 'organization', 'steps.actedBy', 'attachments']);
         return $this->success(LeaveRequestResource::make($leaveRequest));
     }
@@ -86,35 +87,29 @@ class LeaveRequestController extends Controller
     // PUT /api/leave-requests/{id}
     public function update(UpdateLeaveRequestRequest $request, LeaveRequest $leaveRequest): JsonResponse
     {
-        $data = array_filter($request->validated(), fn($v) => $v !== null);
+        $this->authorize('update', $leaveRequest);
 
-        // Recalculate working days if dates changed
-        if (isset($data['start_date']) || isset($data['end_date'])) {
-            $mergedData = array_merge([
-                'start_date' => $leaveRequest->start_date->toDateString(),
-                'end_date'   => $leaveRequest->end_date->toDateString(),
-                'days'       => $leaveRequest->days,
-            ], $data);
+        try {
+            $updated = $this->service->update(
+                $leaveRequest,
+                $request->validated(),
+                $request->user()
+            );
 
-            $rule = new WorkingDaysRule();
-            $rule->setData($mergedData);
-            $rule->validate('days', $mergedData['days'], fn($msg) => null);
-            if ($rule->calculatedDays > 0) {
-                $data['days'] = $rule->calculatedDays;
-            }
+            return $this->success(
+                LeaveRequestResource::make($updated->load(['employee', 'leaveType', 'organization'])),
+                'تم تحديث طلب الإجازة بنجاح.'
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->error('بيانات غير صحيحة.', 422, $e->errors());
         }
-
-        $leaveRequest->update($data);
-
-        return $this->success(
-            LeaveRequestResource::make($leaveRequest->fresh(['employee', 'leaveType', 'organization'])),
-            'تم تحديث طلب الإجازة بنجاح.'
-        );
     }
 
     // POST /api/leave-requests/{id}/submit
     public function submit(Request $request, LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('submit', $leaveRequest);
+
         try {
             $result = $this->service->submit($leaveRequest, $request->user());
             return $this->success(
@@ -129,6 +124,8 @@ class LeaveRequestController extends Controller
     // POST /api/leave-requests/{id}/approve
     public function approve(ApproveLeaveRequestRequest $request, LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('approve', $leaveRequest);
+
         try {
             $step   = LeaveRequestStep::findOrFail($request->validated('step_id'));
             $result = $this->service->approve($leaveRequest, $step, $request->user(), $request->validated('note'));
@@ -144,6 +141,8 @@ class LeaveRequestController extends Controller
     // POST /api/leave-requests/{id}/reject
     public function reject(RejectLeaveRequestRequest $request, LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('reject', $leaveRequest);
+
         try {
             $step   = LeaveRequestStep::findOrFail($request->validated('step_id'));
             $result = $this->service->reject($leaveRequest, $step, $request->user(), $request->validated('reason'));
@@ -159,6 +158,8 @@ class LeaveRequestController extends Controller
     // POST /api/leave-requests/{id}/return
     public function returnRequest(ReturnLeaveRequestRequest $request, LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('return', $leaveRequest);
+
         try {
             $step   = LeaveRequestStep::findOrFail($request->validated('step_id'));
             $result = $this->service->returnRequest($leaveRequest, $step, $request->user(), $request->validated('note'));
@@ -174,6 +175,8 @@ class LeaveRequestController extends Controller
     // POST /api/leave-requests/{id}/cancel
     public function cancel(Request $request, LeaveRequest $leaveRequest): JsonResponse
     {
+        $this->authorize('cancel', $leaveRequest);
+
         try {
             $result = $this->service->cancel($leaveRequest, $request->user());
             return $this->success(

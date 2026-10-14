@@ -17,7 +17,19 @@ class OrganizationPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('manage_organization');
+        return $user->hasPermissionSafe('manage_organization');
+    }
+
+    /**
+     * قراءة قائمة المؤسسات عبر API (ضمن نطاق المستخدم).
+     */
+    public function browse(User $user): bool
+    {
+        $user->setOrganizationTeam();
+
+        return $user->hasPermissionSafe('view_leave_requests')
+            || $user->hasPermissionSafe('view_employees')
+            || $user->hasPermissionSafe('manage_organization');
     }
 
     /**
@@ -27,7 +39,7 @@ class OrganizationPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('manage_organization');
+        return $user->hasPermissionSafe('manage_organization');
     }
 
     /**
@@ -37,7 +49,7 @@ class OrganizationPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('manage_organization');
+        return $user->hasPermissionSafe('manage_organization');
     }
 
     /**
@@ -47,7 +59,7 @@ class OrganizationPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('manage_organization');
+        return $user->hasPermissionSafe('manage_organization');
     }
 
     /**
@@ -57,6 +69,6 @@ class OrganizationPolicy
     {
         $user->setOrganizationTeam();
 
-        return $user->hasPermissionTo('manage_organization');
+        return $user->hasPermissionSafe('manage_organization');
     }
 }

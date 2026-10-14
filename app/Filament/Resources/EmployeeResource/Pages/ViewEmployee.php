@@ -22,7 +22,7 @@ class ViewEmployee extends ViewRecord
                     $this->getRecord()->trashed() &&
                     ! EmployeeResource::isSchoolActor() &&
                     (bool) (
-                        auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                         || auth()->user()?->hasPermissionTo('manage_organization')
                         || (auth()->user()?->can('restore', $this->getRecord()) ?? false)
                     )
@@ -46,6 +46,16 @@ class ViewEmployee extends ViewRecord
                 ->color('success')
                 ->url(fn (): string => route('employee.report.print', ['id' => $this->record->id]))
                 ->openUrlInNewTab(true),
+
+            Actions\Action::make('carryover_records')
+                ->label('ملف الترحيلات')
+                ->icon('heroicon-o-arrow-path-rounded-square')
+                ->color('warning')
+                ->modalHeading(fn (): string => "ملف الترحيلات — {$this->record->full_name}")
+                ->modalWidth('4xl')
+                ->modalContent(fn () => view('filament.modals.carryover-records-modal', ['employee' => $this->record]))
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('إغلاق'),
 
             Actions\Action::make('promotions')
                 ->label('سجل الترقيات')

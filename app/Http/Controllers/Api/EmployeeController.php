@@ -7,6 +7,7 @@ use App\Http\Requests\Api\StoreEmployeeRequest;
 use App\Http\Requests\Api\UpdateEmployeeRequest;
 use App\Http\Resources\EmployeeResource;
 use App\Http\Resources\LeaveBalanceResource;
+use App\Http\Resources\LeaveCarryoverRecordResource;
 use App\Models\Employee;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,8 @@ class EmployeeController extends Controller
     // GET /api/employees
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Employee::class);
+
         $query = Employee::with('organization')->latest();
 
         if ($orgId = $request->query('organization_id')) {
@@ -50,6 +53,8 @@ class EmployeeController extends Controller
     // POST /api/employees
     public function store(StoreEmployeeRequest $request): JsonResponse
     {
+        $this->authorize('create', Employee::class);
+
         $employee = Employee::create($request->validated());
         return $this->success(
             EmployeeResource::make($employee->load('organization')),
@@ -61,6 +66,8 @@ class EmployeeController extends Controller
     // GET /api/employees/{id}
     public function show(Employee $employee): JsonResponse
     {
+        $this->authorize('view', $employee);
+
         $employee->load(['organization', 'leaveBalances.leaveType']);
         return $this->success(EmployeeResource::make($employee));
     }
@@ -68,6 +75,8 @@ class EmployeeController extends Controller
     // PUT /api/employees/{id}
     public function update(UpdateEmployeeRequest $request, Employee $employee): JsonResponse
     {
+        $this->authorize('update', $employee);
+
         $employee->update(array_filter($request->validated(), fn($v) => $v !== null));
         return $this->success(
             EmployeeResource::make($employee->fresh('organization')),
@@ -78,16 +87,37 @@ class EmployeeController extends Controller
     // DELETE /api/employees/{id}
     public function destroy(Employee $employee): JsonResponse
     {
+        $this->authorize('delete', $employee);
+
         $employee->delete();
         return $this->success(null, 'تم حذف الموظف بنجاح.');
+    }
+
+    // GET /api/employees/{id}/carryover-records
+    public function carryoverRecords(Employee $employee): JsonResponse
+    {
+        $this->authorize('view', $employee);
+
+        $records = $employee->carryoverRecords()
+            ->with('leaveType')
+            ->orderByDesc('to_fiscal_year')
+            ->get();
+
+        return $this->success(
+            LeaveCarryoverRecordResource::collection($records),
+            'سجل ترحيلات الموظف.'
+        );
     }
 
     // GET /api/employees/{id}/balances
     public function balances(Employee $employee): JsonResponse
     {
+        $this->authorize('view', $employee);
+
+        $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
         $balances = $employee->leaveBalances()
             ->with('leaveType')
-            ->where('year', now()->year)
+            ->where('year', $fiscalYear)
             ->get();
 
         return $this->success(

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\LeaveRequest;
 use App\Services\DashboardStatsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,8 @@ class DashboardController extends Controller
     // GET /api/dashboard/stats
     public function stats(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', LeaveRequest::class);
+
         $user = $request->user()->load('organization');
         $org  = $user->organization;
 

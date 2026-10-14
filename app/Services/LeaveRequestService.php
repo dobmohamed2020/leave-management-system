@@ -197,6 +197,135 @@ class LeaveRequestService
         return new CreateLeaveRequestResult($request->fresh(), $warnings);
     }
 
+    /**
+     * Validate and persist updates to a draft/returned leave request.
+     *
+     * @param  array<string, mixed>  $patch
+     * @throws ValidationException
+     */
+    public function update(LeaveRequest $leaveRequest, array $patch, User $actedBy): LeaveRequest
+    {
+        if (! $leaveRequest->status->canBeEdited() && ! $leaveRequest->status->canBeModifiedBySchool()) {
+            throw ValidationException::withMessages([
+                'status' => "لا يمكن تعديل الطلب في حالته الحالية ({$leaveRequest->status->label()}).",
+            ]);
+        }
+
+        $patch = array_filter($patch, fn ($v) => $v !== null);
+
+        $data = array_merge([
+            'employee_id'            => $leaveRequest->employee_id,
+            'leave_type_id'          => $leaveRequest->leave_type_id,
+            'start_date'             => $leaveRequest->start_date->toDateString(),
+            'end_date'               => $leaveRequest->end_date->toDateString(),
+            'days'                     => $leaveRequest->days,
+            'reason'                   => $leaveRequest->reason,
+            'substitute_employee_id'   => $leaveRequest->substitute_employee_id,
+            'deduct_from_carried'      => $leaveRequest->deduct_from_carried,
+            'written_at'               => $leaveRequest->written_at?->toDateString(),
+            'allow_past_dates'         => true,
+            'exclude_request_id'       => $leaveRequest->id,
+        ], $patch);
+
+        $employee = Employee::withoutGlobalScopes()
+            ->whereNull('deleted_at')
+            ->find($data['employee_id']);
+
+        if (! $employee) {
+            throw ValidationException::withMessages([
+                'employee_id' => 'الموظف المحدد غير موجود أو تم حذفه.',
+            ]);
+        }
+
+        $leaveType = LeaveType::findOrFail($data['leave_type_id']);
+        $fiscalYear = app(FiscalYearService::class)->fiscalYearFor(
+            isset($data['start_date']) ? \Carbon\Carbon::parse($data['start_date']) : null
+        );
+        $deductFromCarried = (bool) ($data['deduct_from_carried'] ?? false);
+
+        if ($deductFromCarried && ! $leaveType->isRegular()) {
+            throw ValidationException::withMessages([
+                'leave_type_id' => 'خصم الإجازة من الرصيد المُرحَّل متاح فقط للإجازات الاعتيادية.',
+            ]);
+        }
+
+        $startDate = \Carbon\Carbon::parse($data['start_date'])->startOfDay();
+        $allowPastDates = (bool) ($data['allow_past_dates'] ?? false);
+        if (! $allowPastDates && $startDate->isPast() && ! $startDate->isToday()) {
+            throw ValidationException::withMessages([
+                'start_date' => 'لا يمكن تقديم طلب إجازة بتاريخ قديم في الماضي.',
+            ]);
+        }
+
+        $endDate = \Carbon\Carbon::parse($data['end_date'])->startOfDay();
+        if ($endDate->lt($startDate)) {
+            throw ValidationException::withMessages([
+                'end_date' => 'تاريخ النهاية يجب أن يكون في نفس تاريخ البداية أو بعده.',
+            ]);
+        }
+
+        $workingDaysRule = new WorkingDaysRule();
+        $workingDaysRule->setData($data);
+        $workingDaysRule->validate('days', $data['days'] ?? 0, fn ($msg) => null);
+
+        if ($workingDaysRule->calculatedDays > 0) {
+            $data['days'] = $workingDaysRule->calculatedDays;
+        } elseif (empty($data['days']) || (int) $data['days'] <= 0) {
+            throw ValidationException::withMessages([
+                'start_date' => 'لا توجد أيام عمل في الفترة المحددة (عطلة أسبوعية أو إجازة رسمية). اختر تواريخاً أخرى.',
+                'days'       => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
+            ]);
+        }
+
+        $balanceRule = new SufficientBalanceRule($employee, $leaveType, $fiscalYear, $deductFromCarried);
+        $balanceRule->validate('days', $data['days'], fn ($msg) => throw ValidationException::withMessages(['days' => $msg]));
+
+        $excludeId = (int) ($data['exclude_request_id'] ?? $leaveRequest->id);
+        $overlapMessages = [];
+        $noOverlapRule = new NoOverlapRule($employee->id, $excludeId);
+        $noOverlapRule->setData($data);
+        $noOverlapRule->validate('days', $data['days'], function ($msg) use (&$overlapMessages) {
+            $overlapMessages[] = $msg;
+        });
+        if (! empty($overlapMessages)) {
+            throw ValidationException::withMessages(['start_date' => $overlapMessages]);
+        }
+
+        $maxDaysMessages = [];
+        $maxRule = new MaxDaysPerRequestRule($leaveType);
+        $maxRule->validate('days', $data['days'], function ($msg) use (&$maxDaysMessages) {
+            $maxDaysMessages[] = $msg;
+        });
+        if (! empty($maxDaysMessages)) {
+            throw ValidationException::withMessages(['days' => $maxDaysMessages]);
+        }
+
+        $substituteId = $data['substitute_employee_id'] ?? null;
+        if (! empty($substituteId) && (int) $substituteId === (int) $employee->id) {
+            throw ValidationException::withMessages([
+                'substitute_employee_id' => 'لا يمكن أن يكون الموظف البديل هو نفس طالب الإجازة.',
+            ]);
+        }
+
+        $reason = isset($data['reason']) ? trim((string) $data['reason']) : null;
+        $data['reason'] = ($reason !== '') ? $reason : null;
+
+        $leaveRequest->update([
+            'employee_id'            => $employee->id,
+            'organization_id'        => $employee->organization_id,
+            'leave_type_id'          => $data['leave_type_id'],
+            'deduct_from_carried'    => $deductFromCarried,
+            'substitute_employee_id' => $data['substitute_employee_id'] ?? null,
+            'start_date'             => $data['start_date'],
+            'end_date'               => $data['end_date'],
+            'days'                   => $data['days'],
+            'written_at'             => $data['written_at'] ?? null,
+            'reason'                 => $data['reason'],
+        ]);
+
+        return $leaveRequest->fresh();
+    }
+
     // -------------------------------------------------------------------------
     // Submit
     // -------------------------------------------------------------------------
@@ -226,10 +355,11 @@ class LeaveRequestService
 
             // Snapshot current balance
             $leaveType = $request->leaveType;
+            $fiscalYear = app(FiscalYearService::class)->fiscalYearFor($request->start_date);
             $balance   = $this->balanceService->getOrCreateBalance(
                 $employee,
                 $leaveType,
-                now()->year
+                $fiscalYear
             );
 
             $request->balance_entitled  = $balance->entitled;
@@ -484,6 +614,11 @@ class LeaveRequestService
         string $note
     ): LeaveRequest {
         $this->guardStepAction($request, $step, $actedBy);
+
+        $note = trim($note);
+        if (mb_strlen($note) < 5) {
+            throw new LeaveRequestException('ملاحظة الإعادة للتعديل مطلوبة ولا يمكن أن تكون فارغة.');
+        }
 
         return DB::transaction(function () use ($request, $step, $actedBy, $note) {
             $step->update([

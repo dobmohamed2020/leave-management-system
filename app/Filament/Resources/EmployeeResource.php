@@ -626,7 +626,7 @@ class EmployeeResource extends Resource
                     ->modalSubmitActionLabel('نعم، احذف نهائياً بلا رجعة')
                     ->modalCancelActionLabel('إلغاء')
                     ->visible(fn (): bool =>
-                        (bool) (auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        (bool) (auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || auth()->user()?->hasPermissionTo('manage_organization'))
                     )
                     ->action(function (Employee $record): void {
@@ -653,7 +653,7 @@ class EmployeeResource extends Resource
                         $record->trashed() &&
                         ! static::isSchoolActor() &&
                         (bool) (
-                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || auth()->user()?->hasPermissionTo('manage_organization')
                             || (auth()->user()?->can('restore', $record) ?? false)
                         )
@@ -685,7 +685,7 @@ class EmployeeResource extends Resource
                     ->modalDescription('سيتم تجديد أرصدة الإجازات للموظفين المحددين للسنة الحالية. هل أنت متأكد؟')
                     ->action(function (\Illuminate\Database\Eloquent\Collection $records): void {
                         $service = app(\App\Services\LeaveBalanceService::class);
-                        $year = now()->year;
+                        $year = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
                         $count = 0;
                         foreach ($records as $employee) {
                             try {
@@ -717,7 +717,7 @@ class EmployeeResource extends Resource
                     ->visible(fn (): bool =>
                         ! static::isSchoolActor() &&
                         (bool) (
-                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || auth()->user()?->hasPermissionTo('manage_organization')
                             || auth()->user()?->hasPermissionTo('delete_employee')
                         )

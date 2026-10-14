@@ -61,7 +61,7 @@ class ViewLeaveRequest extends ViewRecord
                     $this->getRecord()->trashed() &&
                     ! (Auth::user()?->organization?->isSchool() ?? false) &&
                     (bool) (
-                        Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                         || Auth::user()?->hasPermissionTo('manage_organization')
                         || (Auth::user()?->can('restore', $this->getRecord()) ?? false)
                     )

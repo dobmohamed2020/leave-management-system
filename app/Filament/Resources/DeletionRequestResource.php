@@ -34,8 +34,10 @@ class DeletionRequestResource extends Resource
             return false;
         }
 
+        $user->setOrganizationTeam();
+
         // Available to Admin Manager, Directorate roles, and School Principals/Officers
-        return $user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام', 'مدير مدرسة', 'موظف مدرسة'])
+        return $user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير مدرسة', 'موظف مدرسة'])
             || $user->hasPermissionTo('manage_organization')
             || $user->hasPermissionTo('approve_leave_request');
     }
@@ -202,7 +204,7 @@ class DeletionRequestResource extends Resource
                     ->color('success')
                     ->visible(fn (DeletionRequest $record): bool =>
                         $record->isPending() &&
-                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || Auth::user()?->hasPermissionTo('manage_organization'))
                     )
                     ->form([
@@ -269,7 +271,7 @@ class DeletionRequestResource extends Resource
                     ->color('danger')
                     ->visible(fn (DeletionRequest $record): bool =>
                         $record->isPending() &&
-                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || Auth::user()?->hasPermissionTo('manage_organization'))
                     )
                     ->form([
@@ -309,7 +311,7 @@ class DeletionRequestResource extends Resource
 
                         $user = Auth::user();
                         $hasRole = (bool) (
-                            $user?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            $user?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || $user?->hasPermissionTo('manage_organization')
                         );
 

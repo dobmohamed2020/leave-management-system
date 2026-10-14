@@ -529,6 +529,45 @@
                     @endforelse
                 </tbody>
             </table>
+
+            @if (! empty($carryoverFile))
+                <div style="margin-top: 18px;">
+                    <h4 style="font-size: 14px; font-weight: 700; color: #1e3a5f; margin-bottom: 8px;">
+                        ملف الترحيلات (سنة مالية — أيام مُرحَّلة — درجة الاستحقاق وقت الترحيل)
+                    </h4>
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>من سنة (30/6)</th>
+                                <th>إلى سنة (1/7)</th>
+                                <th>نوع الإجازة</th>
+                                <th>الأيام المُرحَّلة</th>
+                                <th>درجة الاستحقاق</th>
+                                <th>المصدر</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($carryoverFile as $row)
+                                <tr>
+                                    <td>{{ $row['from_label'] ?? $row['from_fiscal_year'] }}</td>
+                                    <td>{{ $row['to_label'] ?? $row['to_fiscal_year'] }}</td>
+                                    <td>{{ $row['leave_type'] ?? '—' }}</td>
+                                    <td style="font-weight: 700; color: #b45309;">{{ $row['days_carried'] }} يوم</td>
+                                    <td>{{ $row['entitlement_grade'] ?? '—' }}</td>
+                                    <td>
+                                        @switch($row['source'] ?? '')
+                                            @case('year_end') ترحيل 30/6 @break
+                                            @case('initial_balance') رصيد مبدئي @break
+                                            @case('manual') يدوي @break
+                                            @default {{ $row['source'] ?? '—' }}
+                                        @endswitch
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
         </div>
 
         {{-- 4. سجل طلبات الإجازات المعتمدة والكلية --}}

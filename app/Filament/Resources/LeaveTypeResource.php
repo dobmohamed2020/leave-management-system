@@ -31,21 +31,29 @@ class LeaveTypeResource extends Resource
 
     public static function canViewAny(): bool
     {
+        auth()->user()?->setOrganizationTeam();
+
         return Gate::allows('manage_organization');
     }
 
     public static function canCreate(): bool
     {
+        auth()->user()?->setOrganizationTeam();
+
         return Gate::allows('manage_organization');
     }
 
     public static function canEdit($record): bool
     {
+        auth()->user()?->setOrganizationTeam();
+
         return Gate::allows('manage_organization');
     }
 
     public static function canDelete($record): bool
     {
+        auth()->user()?->setOrganizationTeam();
+
         return Gate::allows('manage_organization');
     }
 

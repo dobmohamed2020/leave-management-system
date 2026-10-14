@@ -180,7 +180,7 @@ class UserResource extends Resource
                     ->modalSubmitActionLabel('نعم، احذف نهائياً')
                     ->modalCancelActionLabel('إلغاء')
                     ->visible(fn (): bool =>
-                        (bool) (auth()->user()?->hasRole(['مدير المديرية', 'مدير عام', 'مدير الإدارة'])
+                        (bool) (auth()->user()?->hasRole(['مدير المديرية', 'مدير الإدارة'])
                             || auth()->user()?->hasPermissionTo('manage_organization'))
                     )
                     ->action(function (User $record): void {
