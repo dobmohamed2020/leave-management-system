@@ -157,6 +157,17 @@ class EmployeeResource extends Resource
                 ->searchable()
                 ->helperText('تُدار الدرجات من الإعدادات ← الدرجات الوظيفية'),
 
+            Forms\Components\DatePicker::make('promotion_date')
+                ->label('تاريخ الترقية للدرجة الحالية')
+                ->nullable()
+                ->helperText('تاريخ الحصول على الدرجة الحالية أو آخر ترقية للموظف'),
+
+            Forms\Components\TextInput::make('promotion_decision_number')
+                ->label('رقم وتاريخ قرار الترقية')
+                ->maxLength(100)
+                ->nullable()
+                ->placeholder('مثال: قرار وزاري رقم 12 لسنة 2024'),
+
             Forms\Components\Section::make('رصيد الإجازات المُرحَّل (سنوات سابقة)')
                 ->description('إدارة عدد أيام الإجازة الاعتيادية المُرحَّلة من السنوات السابقة.')
                 ->schema([
@@ -480,6 +491,74 @@ class EmployeeResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
+
+                // طباعة وعرض التقرير الشامل للموظف
+                Tables\Actions\Action::make('print_report')
+                    ->label('التقرير الشامل')
+                    ->icon('heroicon-o-printer')
+                    ->color('success')
+                    ->tooltip('عرض وطباعة التقرير الشامل للموظف (بيانات، ترقيات، أرصدة ومُرحّل، إجازات، وسجل العمليات)')
+                    ->url(fn (Employee $record): string => route('employee.report.print', ['id' => $record->id]))
+                    ->openUrlInNewTab(true),
+
+                // سجل الترقيات والتدرج الوظيفي
+                Tables\Actions\Action::make('promotions_history')
+                    ->label('الترقيات والدرجات')
+                    ->icon('heroicon-o-academic-cap')
+                    ->color('primary')
+                    ->modalHeading(fn (Employee $record): string => "سجل الترقيات والتدرج الوظيفي — {$record->full_name}")
+                    ->modalWidth('4xl')
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('إغلاق')
+                    ->modalContent(fn (Employee $record) => view('filament.modals.promotions-modal', ['employee' => $record]))
+                    ->extraModalFooterActions([
+                        Tables\Actions\Action::make('add_promotion')
+                            ->label('تسجيل ترقية جديدة')
+                            ->icon('heroicon-o-plus')
+                            ->color('primary')
+                            ->form([
+                                Forms\Components\TextInput::make('grade')
+                                    ->label('الدرجة الوظيفية الجديدة')
+                                    ->required()
+                                    ->placeholder('مثال: معلم أول أ / كبير معلمين'),
+
+                                Forms\Components\Select::make('entitlement_grade')
+                                    ->label('درجة الاستحقاق المرتبطة')
+                                    ->options(EntitlementGrade::options(activeOnly: true))
+                                    ->searchable()
+                                    ->nullable(),
+
+                                Forms\Components\DatePicker::make('promotion_date')
+                                    ->label('تاريخ الترقية')
+                                    ->required()
+                                    ->default(now()),
+
+                                Forms\Components\TextInput::make('decision_number')
+                                    ->label('رقم وتاريخ قرار الترقية')
+                                    ->maxLength(100)
+                                    ->nullable()
+                                    ->placeholder('مثال: قرار رقم 145 لسنة 2024'),
+
+                                Forms\Components\Textarea::make('notes')
+                                    ->label('ملاحظات')
+                                    ->nullable(),
+                            ])
+                            ->action(function (Employee $record, array $data): void {
+                                $record->recordPromotion(
+                                    grade: $data['grade'],
+                                    entitlementGrade: $data['entitlement_grade'] ?? null,
+                                    promotionDate: $data['promotion_date'],
+                                    decisionNumber: $data['decision_number'] ?? null,
+                                    notes: $data['notes'] ?? null,
+                                    userId: auth()->id()
+                                );
+
+                                Notification::make()
+                                    ->success()
+                                    ->title('تم تسجيل الترقية بنجاح وتحديث درجة الموظف')
+                                    ->send();
+                            }),
+                    ]),
 
                 // أيقونة كشف حساب الرصيد المُرحَّل مع الدرجة والتواريخ والاستهلاك
                 Tables\Actions\Action::make('carried_balance_ledger')
@@ -989,6 +1068,117 @@ class EmployeeResource extends Resource
                                                 'مقدّم' => 'info',
                                                 default => 'gray',
                                             }),
+                                    ]),
+                            ]),
+
+                        // =====================================================
+                        // Tab 4: الدرجات وسجل الترقيات
+                        // =====================================================
+                        Infolists\Components\Tabs\Tab::make('الدرجات وسجل الترقيات')
+                            ->icon('heroicon-o-academic-cap')
+                            ->schema([
+                                Infolists\Components\Section::make('الدرجة الحالية وتاريخ الترقية')
+                                    ->columns(4)
+                                    ->schema([
+                                        Infolists\Components\TextEntry::make('entitlementGrade.name')
+                                            ->label('الدرجة الوظيفية الحالية')
+                                            ->default(fn (Employee $record) => $record->grade ?? 'غير محددة')
+                                            ->badge()
+                                            ->color('primary'),
+
+                                        Infolists\Components\TextEntry::make('entitlement_yearly_days')
+                                            ->label('الاستحقاق السنوي الاعتيادي')
+                                            ->state(fn (Employee $record): string => $record->regularLeaveEntitlement() . ' يوم/سنة')
+                                            ->badge()
+                                            ->color('info'),
+
+                                        Infolists\Components\TextEntry::make('promotion_date')
+                                            ->label('تاريخ آخر ترقية للدرجة')
+                                            ->date('d F Y')
+                                            ->placeholder('لم يُحدد'),
+
+                                        Infolists\Components\TextEntry::make('promotion_decision_number')
+                                            ->label('رقم قرار الترقية')
+                                            ->placeholder('—'),
+                                    ]),
+
+                                Infolists\Components\Section::make('سجل التدرج الوظيفي وتواريخ الترقيات')
+                                    ->schema([
+                                        Infolists\Components\RepeatableEntry::make('promotionsList')
+                                            ->label('')
+                                            ->state(fn (Employee $record) =>
+                                                $record->promotions()
+                                                    ->with(['entitlementGrade', 'creator'])
+                                                    ->get()
+                                                    ->map(fn ($p) => [
+                                                        'grade'            => $p->grade,
+                                                        'promotion_date'   => $p->promotion_date?->format('d/m/Y') ?? '—',
+                                                        'decision_number'  => $p->decision_number ?? '—',
+                                                        'duration'         => $p->duration_since_promotion_label,
+                                                        'notes'            => $p->notes ?? '—',
+                                                        'creator_name'     => $p->creator?->name ?? 'النظام',
+                                                    ])
+                                                    ->toArray()
+                                            )
+                                            ->columns(6)
+                                            ->schema([
+                                                Infolists\Components\TextEntry::make('grade')
+                                                    ->label('الدرجة الوظيفية')
+                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+
+                                                Infolists\Components\TextEntry::make('promotion_date')
+                                                    ->label('تاريخ الترقية')
+                                                    ->color('primary'),
+
+                                                Infolists\Components\TextEntry::make('decision_number')
+                                                    ->label('رقم القرار'),
+
+                                                Infolists\Components\TextEntry::make('duration')
+                                                    ->label('المدة في الدرجة')
+                                                    ->color('success'),
+
+                                                Infolists\Components\TextEntry::make('notes')
+                                                    ->label('ملاحظات'),
+
+                                                Infolists\Components\TextEntry::make('creator_name')
+                                                    ->label('المُسجِّل'),
+                                            ]),
+                                    ]),
+                            ]),
+
+                        // =====================================================
+                        // Tab 5: سجل العمليات والتدقيق (Activity Log)
+                        // =====================================================
+                        Infolists\Components\Tabs\Tab::make('سجل العمليات والتدقيق')
+                            ->icon('heroicon-o-finger-print')
+                            ->schema([
+                                Infolists\Components\Section::make('كافة العمليات والتعديلات التي تمت على الموظف')
+                                    ->description('سجل تدقيق كامل لكافة التعديلات على البيانات والترقيات وحركات الأرصدة')
+                                    ->schema([
+                                        Infolists\Components\RepeatableEntry::make('auditTrailList')
+                                            ->label('')
+                                            ->state(fn (Employee $record) =>
+                                                app(\App\Services\EmployeeReportService::class)
+                                                    ->getReportData($record)['auditTrail']
+                                            )
+                                            ->columns(4)
+                                            ->schema([
+                                                Infolists\Components\TextEntry::make('date_label')
+                                                    ->label('التاريخ والوقت')
+                                                    ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Small),
+
+                                                Infolists\Components\TextEntry::make('description')
+                                                    ->label('نوع الإجراء')
+                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+
+                                                Infolists\Components\TextEntry::make('causer_name')
+                                                    ->label('القائم بالإجراء')
+                                                    ->color('primary'),
+
+                                                Infolists\Components\TextEntry::make('details')
+                                                    ->label('التفاصيل والتغييرات')
+                                                    ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Small),
+                                            ]),
                                     ]),
                             ]),
                     ])

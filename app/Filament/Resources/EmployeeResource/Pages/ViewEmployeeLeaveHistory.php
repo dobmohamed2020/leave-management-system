@@ -101,6 +101,18 @@ class ViewEmployeeLeaveHistory extends Page
         return 'تاريخ إجازات: ' . $this->employee->full_name;
     }
 
+    protected function getHeaderActions(): array
+    {
+        return [
+            \Filament\Actions\Action::make('print_report')
+                ->label('طباعة التقرير الشامل')
+                ->icon('heroicon-o-printer')
+                ->color('success')
+                ->url(fn (): string => route('employee.report.print', ['id' => $this->employee->id]))
+                ->openUrlInNewTab(true),
+        ];
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------

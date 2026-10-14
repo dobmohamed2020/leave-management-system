@@ -40,6 +40,23 @@ class ViewEmployee extends ViewRecord
                         ]);
                 }),
 
+            Actions\Action::make('print_report')
+                ->label('طباعة التقرير الشامل')
+                ->icon('heroicon-o-printer')
+                ->color('success')
+                ->url(fn (): string => route('employee.report.print', ['id' => $this->record->id]))
+                ->openUrlInNewTab(true),
+
+            Actions\Action::make('promotions')
+                ->label('سجل الترقيات')
+                ->icon('heroicon-o-academic-cap')
+                ->color('primary')
+                ->modalHeading(fn (): string => "سجل الترقيات والدرجات — {$this->record->full_name}")
+                ->modalWidth('4xl')
+                ->modalContent(fn () => view('filament.modals.promotions-modal', ['employee' => $this->record]))
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('إغلاق'),
+
             Actions\Action::make('leave_history')
                 ->label('التاريخ الكامل')
                 ->icon('heroicon-o-calendar-days')

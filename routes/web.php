@@ -56,6 +56,33 @@ Route::get('/leave-print/{number}', function (string $number) {
         ->header('Content-Language', 'ar');
 })->middleware('auth')->name('leave.pdf.print');
 
+// Authenticated comprehensive employee report print route
+Route::get('/employee-report/{id}', function (int $id) {
+    $user = auth()->user();
+    if (! $user) {
+        abort(403);
+    }
+    $user->setOrganizationTeam();
+
+    $employee = \App\Models\Employee::withoutGlobalScopes()->findOrFail($id);
+
+    // Enforce org scope authorization
+    if ($user->organization) {
+        $allowedIds = $user->organization->subtreeIds();
+        if (! in_array((int) $employee->organization_id, $allowedIds)) {
+            abort(403, 'غير مصرح لك بعرض بيانات هذا الموظف.');
+        }
+    }
+
+    app()->setLocale('ar');
+
+    $data = app(\App\Services\EmployeeReportService::class)->getReportData($employee);
+
+    return response()
+        ->view('print.employee-report', $data)
+        ->header('Content-Language', 'ar');
+})->middleware('auth')->name('employee.report.print');
+
 // Authenticated Excel export route
 Route::get('/leave-export', function (\Illuminate\Http\Request $request) {
     $filters = $request->only(['status', 'organization_id', 'employee_name', 'leave_type_id']);
