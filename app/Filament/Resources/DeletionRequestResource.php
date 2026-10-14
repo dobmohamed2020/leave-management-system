@@ -150,12 +150,14 @@ class DeletionRequestResource extends Resource
                         'pending'  => 'بانتظار الاعتماد',
                         'approved' => 'معتمد ومحذوف',
                         'rejected' => 'مرفوض',
+                        'restored' => 'تمت الاستعادة من الحذف',
                         default    => $state,
                     })
                     ->color(fn ($state) => match($state) {
                         'pending'  => 'warning',
                         'approved' => 'success',
                         'rejected' => 'danger',
+                        'restored' => 'info',
                         default    => 'gray',
                     }),
 
@@ -171,6 +173,7 @@ class DeletionRequestResource extends Resource
                         'pending'  => 'بانتظار الاعتماد',
                         'approved' => 'معتمد ومحذوف',
                         'rejected' => 'مرفوض',
+                        'restored' => 'تمت الاستعادة من الحذف',
                     ]),
                 Tables\Filters\SelectFilter::make('model_type')
                     ->label('نوع العنصر')
@@ -286,6 +289,74 @@ class DeletionRequestResource extends Resource
                         Notification::make()
                             ->warning()
                             ->title('تم رفض طلب الحذف وإشعار المدرسة بالسبب')
+                            ->send();
+                    }),
+
+                // استعادة من الحذف العادي (خاص بمدير الإدارة والآدمن)
+                Tables\Actions\Action::make('restore_deletion')
+                    ->label('استعادة من الحذف')
+                    ->icon('heroicon-o-arrow-uturn-left')
+                    ->color('success')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (DeletionRequest $record): string => "تأكيد استعادة العنصر من الحذف: {$record->title}")
+                    ->modalDescription('سيتم إلغاء الحذف العادي واستعادة الموظف أو طلب الإجازة وإعادته للعمل كنشط في النظام.')
+                    ->modalSubmitActionLabel('نعم، استعادة العنصر')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(function (DeletionRequest $record): bool {
+                        if ($record->status !== 'approved' || $record->action_type !== 'soft_delete') {
+                            return false;
+                        }
+
+                        $user = Auth::user();
+                        $hasRole = (bool) (
+                            $user?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || $user?->hasPermissionTo('manage_organization')
+                        );
+
+                        if (! $hasRole) {
+                            return false;
+                        }
+
+                        $target = $record->getTargetRecord();
+                        return $target && method_exists($target, 'trashed') && $target->trashed();
+                    })
+                    ->form([
+                        Forms\Components\Textarea::make('restore_notes')
+                            ->label('سبب أو ملاحظات الاستعادة')
+                            ->placeholder('اكتب سبب استعادة العنصر من الحذف...')
+                            ->nullable(),
+                    ])
+                    ->action(function (DeletionRequest $record, array $data): void {
+                        $target = $record->getTargetRecord();
+                        $admin = Auth::user();
+
+                        if ($target && method_exists($target, 'restore')) {
+                            if ($record->model_type === 'employee') {
+                                /** @var Employee $target */
+                                $target->restore();
+                                if (method_exists($target, 'update')) {
+                                    $target->update(['is_active' => true]);
+                                }
+                            } elseif ($record->model_type === 'leave_request') {
+                                /** @var LeaveRequest $target */
+                                app(\App\Services\LeaveRequestService::class)->restore($target, $admin);
+                            }
+                        }
+
+                        $note = ! empty($data['restore_notes'])
+                            ? $data['restore_notes']
+                            : 'تمت استعادة السجل من الحذف العادي بواسطة مدير الإدارة';
+
+                        $record->update([
+                            'status'      => 'restored',
+                            'admin_notes' => $note,
+                            'reviewed_by' => $admin?->id,
+                            'reviewed_at' => now(),
+                        ]);
+
+                        Notification::make()
+                            ->success()
+                            ->title('تمت استعادة العنصر من الحذف العادي بنجاح وإعادته للعمل')
                             ->send();
                     }),
             ]);

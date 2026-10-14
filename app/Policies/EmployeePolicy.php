@@ -59,4 +59,32 @@ class EmployeePolicy
 
         return $user->hasPermissionTo('delete_employee');
     }
+
+    /**
+     * هل يمكن للمستخدم استعادة موظف محذوف؟
+     */
+    public function restore(User $user, Employee $employee): bool
+    {
+        $user->setOrganizationTeam();
+
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+            return true;
+        }
+
+        return $user->hasPermissionTo('delete_employee') && ! ($user->organization?->isSchool() ?? false);
+    }
+
+    /**
+     * هل يمكن للمستخدم استعادة أي موظف محذوف؟
+     */
+    public function restoreAny(User $user): bool
+    {
+        $user->setOrganizationTeam();
+
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+            return true;
+        }
+
+        return $user->hasPermissionTo('delete_employee') && ! ($user->organization?->isSchool() ?? false);
+    }
 }

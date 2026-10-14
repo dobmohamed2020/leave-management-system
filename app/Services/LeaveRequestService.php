@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\LeaveStatus;
 use App\Enums\StepStatus;
 use App\Exceptions\LeaveRequestException;
+use App\Models\DeletionRequest;
 use App\Models\Employee;
 use App\Models\LeaveBalance;
 use App\Models\LeaveRequest;
@@ -545,6 +546,38 @@ class LeaveRequestService
                 $request->balance_remaining = $balance->remaining;
                 $request->save();
             }
+
+            return $request->fresh();
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Restore
+    // -------------------------------------------------------------------------
+
+    /**
+     * Restore a soft-deleted leave request and reset its status to DRAFT.
+     */
+    public function restore(LeaveRequest $request, User $restoredBy): LeaveRequest
+    {
+        return DB::transaction(function () use ($request, $restoredBy) {
+            $request->restore();
+
+            if ($request->status === LeaveStatus::CANCELLED) {
+                $request->forceFill([
+                    'status'        => LeaveStatus::DRAFT,
+                    'current_stage' => null,
+                ])->save();
+            }
+
+            // Sync any deletion request
+            DeletionRequest::where('model_type', 'leave_request')
+                ->where('model_id', $request->id)
+                ->where('status', 'approved')
+                ->update([
+                    'status'      => 'restored',
+                    'admin_notes' => 'تمت استعادة طلب الإجازة من الحذف العادي',
+                ]);
 
             return $request->fresh();
         });

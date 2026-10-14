@@ -18,6 +18,8 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rules\Unique;
 
@@ -45,6 +47,20 @@ class EmployeeResource extends Resource
     public static function isSchoolActor(): bool
     {
         return auth()->user()?->organization?->isSchool() ?? false;
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery()
+            ->withoutGlobalScopes([
+                SoftDeletingScope::class,
+            ]);
+
+        if (static::isSchoolActor()) {
+            $query->withoutTrashed();
+        }
+
+        return $query;
     }
 
     // -------------------------------------------------------------------------
@@ -457,6 +473,10 @@ class EmployeeResource extends Resource
 
                 Tables\Filters\TernaryFilter::make('is_active')
                     ->label('الحالة'),
+
+                Tables\Filters\TrashedFilter::make()
+                    ->label('المحذوفات')
+                    ->visible(fn (): bool => ! static::isSchoolActor()),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
@@ -541,6 +561,40 @@ class EmployeeResource extends Resource
 
                 Tables\Actions\DeleteAction::make()
                     ->visible(fn (): bool => ! static::isSchoolActor()),
+
+                // استعادة الموظف من الحذف العادي
+                Tables\Actions\RestoreAction::make()
+                    ->label('استعادة من الحذف')
+                    ->color('success')
+                    ->modalHeading(fn (Employee $record): string => "تأكيد استعادة الموظف: {$record->full_name}")
+                    ->modalDescription('سيتم استعادة الموظف وإعادته إلى قائمة الموظفين النشطين في النظام.')
+                    ->modalSubmitActionLabel('نعم، استعادة الموظف')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (Employee $record): bool =>
+                        $record->trashed() &&
+                        ! static::isSchoolActor() &&
+                        (bool) (
+                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || auth()->user()?->hasPermissionTo('manage_organization')
+                            || (auth()->user()?->can('restore', $record) ?? false)
+                        )
+                    )
+                    ->after(function (Employee $record): void {
+                        $record->update(['is_active' => true]);
+
+                        \App\Models\DeletionRequest::where('model_type', 'employee')
+                            ->where('model_id', $record->id)
+                            ->where('status', 'approved')
+                            ->update([
+                                'status'      => 'restored',
+                                'admin_notes' => 'تمت استعادة الموظف من الحذف العادي',
+                            ]);
+
+                        Notification::make()
+                            ->success()
+                            ->title("تمت استعادة الموظف [{$record->full_name}] بنجاح")
+                            ->send();
+                    }),
             ])
             ->bulkActions([
                 Tables\Actions\BulkAction::make('renewBalances')
@@ -572,6 +626,34 @@ class EmployeeResource extends Resource
                             ->success()
                             ->title("تم تجديد أرصدة {$count} موظف بنجاح")
                             ->send();
+                    }),
+
+                Tables\Actions\RestoreBulkAction::make()
+                    ->label('استعادة المحدد من الحذف')
+                    ->color('success')
+                    ->modalHeading('تأكيد استعادة الموظفين المحددين')
+                    ->modalDescription('سيتم استعادة الموظفين المحددين وإعادتهم كنشطين.')
+                    ->modalSubmitActionLabel('نعم، استعادة')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (): bool =>
+                        ! static::isSchoolActor() &&
+                        (bool) (
+                            auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || auth()->user()?->hasPermissionTo('manage_organization')
+                            || auth()->user()?->hasPermissionTo('delete_employee')
+                        )
+                    )
+                    ->after(function (\Illuminate\Database\Eloquent\Collection $records): void {
+                        foreach ($records as $employee) {
+                            $employee->update(['is_active' => true]);
+                            \App\Models\DeletionRequest::where('model_type', 'employee')
+                                ->where('model_id', $employee->id)
+                                ->where('status', 'approved')
+                                ->update([
+                                    'status'      => 'restored',
+                                    'admin_notes' => 'تمت استعادة الموظف من الحذف العادي',
+                                ]);
+                        }
                     }),
             ])
             ->defaultSort('full_name')

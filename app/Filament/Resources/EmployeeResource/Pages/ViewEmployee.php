@@ -16,6 +16,30 @@ class ViewEmployee extends ViewRecord
             Actions\EditAction::make()
                 ->label('تعديل'),
 
+            Actions\RestoreAction::make()
+                ->label('استعادة من الحذف')
+                ->visible(fn (): bool =>
+                    $this->getRecord()->trashed() &&
+                    ! EmployeeResource::isSchoolActor() &&
+                    (bool) (
+                        auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        || auth()->user()?->hasPermissionTo('manage_organization')
+                        || (auth()->user()?->can('restore', $this->getRecord()) ?? false)
+                    )
+                )
+                ->after(function (): void {
+                    $record = $this->getRecord();
+                    $record->update(['is_active' => true]);
+
+                    \App\Models\DeletionRequest::where('model_type', 'employee')
+                        ->where('model_id', $record->id)
+                        ->where('status', 'approved')
+                        ->update([
+                            'status'      => 'restored',
+                            'admin_notes' => 'تمت استعادة الموظف من الحذف العادي',
+                        ]);
+                }),
+
             Actions\Action::make('leave_history')
                 ->label('التاريخ الكامل')
                 ->icon('heroicon-o-calendar-days')

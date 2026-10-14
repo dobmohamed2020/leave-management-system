@@ -80,6 +80,34 @@ class LeaveRequestPolicy
     }
 
     /**
+     * هل يمكن للمستخدم استعادة طلب إجازة محذوف؟
+     */
+    public function restore(User $user, LeaveRequest $leaveRequest): bool
+    {
+        $user->setOrganizationTeam();
+
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+            return true;
+        }
+
+        return $user->hasPermissionTo('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
+    }
+
+    /**
+     * هل يمكن للمستخدم استعادة أي طلب إجازة محذوف؟
+     */
+    public function restoreAny(User $user): bool
+    {
+        $user->setOrganizationTeam();
+
+        if ($user->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام']) || $user->hasPermissionTo('manage_organization')) {
+            return true;
+        }
+
+        return $user->hasPermissionTo('delete_leave_request') && ! ($user->organization?->isSchool() ?? false);
+    }
+
+    /**
      * هل يمكن للمستخدم تقديم طلب إجازة؟
      */
     public function submit(User $user, LeaveRequest $leaveRequest): bool

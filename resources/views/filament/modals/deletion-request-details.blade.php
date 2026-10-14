@@ -37,10 +37,27 @@
 
     {{-- حالة القرار والملاحظات --}}
     @if ($request->status !== 'pending')
-        <div class="p-4 rounded-xl border {{ $request->status === 'approved' ? 'bg-emerald-50/60 border-emerald-300 dark:bg-emerald-900/20 dark:border-emerald-800' : 'bg-red-50/60 border-red-300 dark:bg-red-900/20 dark:border-red-800' }}">
+        @php
+            $boxClass = match($request->status) {
+                'approved' => 'bg-emerald-50/60 border-emerald-300 dark:bg-emerald-900/20 dark:border-emerald-800',
+                'restored' => 'bg-blue-50/60 border-blue-300 dark:bg-blue-900/20 dark:border-blue-800',
+                default    => 'bg-red-50/60 border-red-300 dark:bg-red-900/20 dark:border-red-800',
+            };
+            $textClass = match($request->status) {
+                'approved' => 'text-emerald-800 dark:text-emerald-300',
+                'restored' => 'text-blue-800 dark:text-blue-300',
+                default    => 'text-red-800 dark:text-red-300',
+            };
+            $titleText = match($request->status) {
+                'approved' => 'تم اعتماد وتنفيذ الحذف',
+                'restored' => 'تمت استعادة العنصر من الحذف العادي وإعادته للعمل',
+                default    => 'تم رفض طلب الحذف',
+            };
+        @endphp
+        <div class="p-4 rounded-xl border {{ $boxClass }}">
             <div class="flex items-center justify-between mb-1.5">
-                <span class="font-bold text-xs {{ $request->status === 'approved' ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-800 dark:text-red-300' }}">
-                    قرار الإدارة: {{ $request->status === 'approved' ? 'تم اعتماد وتنفيذ الحذف' : 'تم رفض طلب الحذف' }}
+                <span class="font-bold text-xs {{ $textClass }}">
+                    قرار الإدارة: {{ $titleText }}
                 </span>
                 <span class="text-xs text-gray-500">
                     بواسطة: {{ $request->reviewer?->name ?? '—' }} ({{ $request->reviewed_at?->format('d/m/Y - h:i A') }})

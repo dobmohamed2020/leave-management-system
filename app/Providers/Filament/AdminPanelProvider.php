@@ -96,7 +96,12 @@ class AdminPanelProvider extends PanelProvider
                 PanelsRenderHook::TOPBAR_START,
                 fn (): string => Blade::render('filament.hooks.context-bar'),
             )
+            ->renderHook(
+                PanelsRenderHook::BODY_END,
+                fn (): string => Blade::render('filament.hooks.english-numerals'),
+            )
             ->middleware([
+                \App\Http\Middleware\NormalizeArabicNumbers::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,

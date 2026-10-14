@@ -55,6 +55,21 @@ class ViewLeaveRequest extends ViewRecord
                     }
                 }),
 
+            \Filament\Actions\RestoreAction::make()
+                ->label('استعادة من الحذف')
+                ->visible(fn (): bool =>
+                    $this->getRecord()->trashed() &&
+                    ! (Auth::user()?->organization?->isSchool() ?? false) &&
+                    (bool) (
+                        Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                        || Auth::user()?->hasPermissionTo('manage_organization')
+                        || (Auth::user()?->can('restore', $this->getRecord()) ?? false)
+                    )
+                )
+                ->after(function (): void {
+                    app(\App\Services\LeaveRequestService::class)->restore($this->getRecord(), Auth::user());
+                }),
+
             // Submit
             Action::make('submit')
                 ->label('تقديم الطلب')

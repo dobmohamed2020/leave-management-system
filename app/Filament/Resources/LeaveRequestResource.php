@@ -20,6 +20,7 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
@@ -529,6 +530,10 @@ class LeaveRequestResource extends Resource
                         }
                         return $query;
                     }),
+
+                Tables\Filters\TrashedFilter::make()
+                    ->label('المحذوفات')
+                    ->visible(fn (): bool => ! (Auth::user()?->organization?->isSchool() ?? false)),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
@@ -625,6 +630,32 @@ class LeaveRequestResource extends Resource
                                 'current_stage' => null,
                             ])->save();
                         }
+                    }),
+
+                // استعادة طلب الإجازة من الحذف العادي
+                Tables\Actions\RestoreAction::make()
+                    ->label('استعادة من الحذف')
+                    ->color('success')
+                    ->modalHeading(fn (LeaveRequest $record): string => "تأكيد استعادة طلب الإجازة رقم {$record->number}")
+                    ->modalDescription('سيتم استعادة طلب الإجازة وإعادته بحالة «مسودة» بحيث يمكن تعديله أو إعادة تقديمه.')
+                    ->modalSubmitActionLabel('نعم، استعادة طلب الإجازة')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (LeaveRequest $record): bool =>
+                        $record->trashed() &&
+                        ! (Auth::user()?->organization?->isSchool() ?? false) &&
+                        (bool) (
+                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || Auth::user()?->hasPermissionTo('manage_organization')
+                            || (Auth::user()?->can('restore', $record) ?? false)
+                        )
+                    )
+                    ->after(function (LeaveRequest $record): void {
+                        app(\App\Services\LeaveRequestService::class)->restore($record, Auth::user());
+
+                        Notification::make()
+                            ->success()
+                            ->title("تمت استعادة طلب الإجازة [{$record->number}] بنجاح بحالة مسودة")
+                            ->send();
                     }),
 
                 Tables\Actions\Action::make('submit')
@@ -797,6 +828,29 @@ class LeaveRequestResource extends Resource
                             'leave-requests.xlsx'
                         );
                     }),
+
+                Tables\Actions\RestoreBulkAction::make()
+                    ->label('استعادة المحدد من الحذف')
+                    ->color('success')
+                    ->modalHeading('تأكيد استعادة طلبات الإجازة المحددة')
+                    ->modalDescription('سيتم استعادة الطلبات المحددة وإعادتها لحالة «مسودة».')
+                    ->modalSubmitActionLabel('نعم، استعادة')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (): bool =>
+                        ! (Auth::user()?->organization?->isSchool() ?? false) &&
+                        (bool) (
+                            Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || Auth::user()?->hasPermissionTo('manage_organization')
+                            || Auth::user()?->hasPermissionTo('delete_leave_request')
+                        )
+                    )
+                    ->after(function (\Illuminate\Database\Eloquent\Collection $records): void {
+                        $service = app(\App\Services\LeaveRequestService::class);
+                        $user = Auth::user();
+                        foreach ($records as $req) {
+                            $service->restore($req, $user);
+                        }
+                    }),
             ])
             ->defaultSort('created_at', 'desc');
     }
@@ -869,28 +923,35 @@ class LeaveRequestResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         $user = Auth::user();
-        $base = LeaveRequest::withoutGlobalScopes()
-            ->withTrashed()
+        $query = parent::getEloquentQuery()
+            ->withoutGlobalScopes([
+                \App\Models\Scopes\OrganizationScope::class,
+                SoftDeletingScope::class,
+            ])
             ->with(['employee', 'leaveType', 'organization', 'steps.actedBy']);
 
         if (! $user) {
-            return $base->whereRaw('1 = 0');
+            return $query->whereRaw('1 = 0');
         }
 
         $user->setOrganizationTeam();
+
+        if ($user->organization?->isSchool()) {
+            $query->withoutTrashed();
+        }
 
         if ($user->hasPermissionTo('view_all_leave_requests')) {
             $org = $user->organization;
 
             if ($org) {
-                return $base->whereIn('organization_id', $org->subtreeIds());
+                return $query->whereIn('organization_id', $org->subtreeIds());
             }
 
-            return $base;
+            return $query;
         }
 
         // Scoped to own organization only
-        return $base->where('organization_id', $user->organization_id);
+        return $query->where('organization_id', $user->organization_id);
     }
 
     // -------------------------------------------------------------------------

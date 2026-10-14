@@ -407,3 +407,160 @@ it('verifies Point 8: separate routes and pages exist for regular vs carried lea
     expect($pages['create-carried']->getPage())->toBe(\App\Filament\Resources\LeaveRequestResource\Pages\CreateCarriedLeaveRequest::class);
 });
 
+it('verifies Point 9: NormalizeArabicNumbers middleware converts Arabic numerals to English digits in requests', function () {
+    $middleware = new \App\Http\Middleware\NormalizeArabicNumbers();
+
+    $request = \Illuminate\Http\Request::create('/test', 'POST', [
+        'phone'         => '٠١٠١٢٣٤٥٦٧٨',
+        'days'          => '٥',
+        'employee_code' => 'EMP-١٠٠١',
+        'nested'        => [
+            'amount' => '١٢٣.٤٥',
+            'year'   => '٢٠٢٦',
+        ],
+    ]);
+
+    $middleware->handle($request, function ($req) {
+        expect($req->input('phone'))->toBe('01012345678')
+            ->and($req->input('days'))->toBe('5')
+            ->and($req->input('employee_code'))->toBe('EMP-1001')
+            ->and($req->input('nested.amount'))->toBe('123.45')
+            ->and($req->input('nested.year'))->toBe('2026');
+
+        return new \Symfony\Component\HttpFoundation\Response();
+    });
+});
+
+it('verifies Point 10: validation messages and attribute names are in Arabic', function () {
+    $validator = \Illuminate\Support\Facades\Validator::make([], [
+        'start_date' => 'required',
+        'days'       => 'required|integer|min:1',
+        'email'      => 'required|email',
+    ]);
+
+    expect($validator->fails())->toBeTrue();
+    $messages = $validator->errors()->all();
+
+    expect($messages)->toContain('حقل تاريخ البداية مطلوب.')
+        ->and($messages)->toContain('حقل عدد الأيام مطلوب.')
+        ->and($messages)->toContain('حقل البريد الإلكتروني مطلوب.');
+});
+
+it('verifies Point 11: department manager (مدير الإدارة) can restore soft-deleted employee', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+    $schoolUser = $ctx['schoolUser'];
+
+    // Assign role 'مدير الإدارة' to adminUser and 'مدير مدرسة' to schoolUser
+    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
+    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير مدرسة', 'guard_name' => 'web']);
+    $adminUser->assignRole('مدير الإدارة');
+    $schoolUser->assignRole('مدير مدرسة');
+
+    // Soft delete employee
+    $employee->delete();
+    expect($employee->fresh()->trashed())->toBeTrue();
+
+    // Verify policy: admin manager can restore, school user cannot
+    $policy = app(\App\Policies\EmployeePolicy::class);
+    expect($policy->restore($adminUser, $employee))->toBeTrue()
+        ->and($policy->restore($schoolUser, $employee))->toBeFalse();
+
+    // Restore employee
+    $employee->restore();
+    $employee->update(['is_active' => true]);
+
+    expect($employee->fresh()->trashed())->toBeFalse()
+        ->and($employee->fresh()->is_active)->toBeTrue();
+});
+
+it('verifies Point 12: department manager (مدير الإدارة) can restore soft-deleted leave request to draft', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+    $schoolUser = $ctx['schoolUser'];
+    $regularType = $ctx['regularType'];
+
+    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
+    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير مدرسة', 'guard_name' => 'web']);
+    $adminUser->assignRole('مدير الإدارة');
+    $schoolUser->assignRole('مدير مدرسة');
+
+    $request = LeaveRequest::create([
+        'employee_id'     => $employee->id,
+        'organization_id' => $ctx['school']->id,
+        'leave_type_id'   => $regularType->id,
+        'start_date'      => now()->addDays(5)->toDateString(),
+        'end_date'        => now()->addDays(7)->toDateString(),
+        'days'            => 2,
+        'status'          => LeaveStatus::CANCELLED,
+        'created_by'      => $adminUser->id,
+    ]);
+
+    // Soft delete request
+    $request->delete();
+    expect($request->fresh()->trashed())->toBeTrue();
+
+    // Verify policy
+    $policy = app(\App\Policies\LeaveRequestPolicy::class);
+    expect($policy->restore($adminUser, $request))->toBeTrue()
+        ->and($policy->restore($schoolUser, $request))->toBeFalse();
+
+    // Restore via LeaveRequestService
+    $service = app(\App\Services\LeaveRequestService::class);
+    $restored = $service->restore($request, $adminUser);
+
+    expect($restored->trashed())->toBeFalse()
+        ->and($restored->status)->toBe(LeaveStatus::DRAFT)
+        ->and($restored->current_stage)->toBeNull();
+});
+
+it('verifies Point 13: restore from normal deletion in DeletionRequest updates request to restored and restores target', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+    $schoolUser = $ctx['schoolUser'];
+
+    \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'مدير الإدارة', 'guard_name' => 'web']);
+    $adminUser->assignRole('مدير الإدارة');
+
+    // 1. Create a deletion request approved as soft_delete
+    $employee->delete();
+    $delReq = DeletionRequest::create([
+        'organization_id' => $ctx['school']->id,
+        'model_type'      => 'employee',
+        'model_id'        => $employee->id,
+        'title'           => "طلب حذف الموظف {$employee->full_name}",
+        'reason'          => 'نقل الموظف',
+        'requested_by'    => $schoolUser->id,
+        'status'          => 'approved',
+        'action_type'     => 'soft_delete',
+        'reviewed_by'     => $adminUser->id,
+        'reviewed_at'     => now(),
+    ]);
+
+    expect($employee->fresh()->trashed())->toBeTrue()
+        ->and($delReq->isApproved())->toBeTrue();
+
+    // 2. Department manager restores the deletion
+    $target = $delReq->getTargetRecord();
+    expect($target)->not->toBeNull()
+        ->and($target->trashed())->toBeTrue();
+
+    $target->restore();
+    $target->update(['is_active' => true]);
+
+    $delReq->update([
+        'status'      => 'restored',
+        'admin_notes' => 'تمت استعادة الموظف من الحذف العادي بواسطة مدير الإدارة',
+        'reviewed_by' => $adminUser->id,
+        'reviewed_at' => now(),
+    ]);
+
+    expect($delReq->isRestored())->toBeTrue()
+        ->and($employee->fresh()->trashed())->toBeFalse()
+        ->and($employee->fresh()->is_active)->toBeTrue();
+});
+
+

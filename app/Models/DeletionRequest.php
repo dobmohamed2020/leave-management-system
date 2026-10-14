@@ -60,6 +60,11 @@ class DeletionRequest extends Model
         return $this->status === 'rejected';
     }
 
+    public function isRestored(): bool
+    {
+        return $this->status === 'restored';
+    }
+
     public function getTargetRecord(): ?Model
     {
         if ($this->model_type === 'employee') {
