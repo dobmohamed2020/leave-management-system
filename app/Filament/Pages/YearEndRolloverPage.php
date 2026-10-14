@@ -25,41 +25,54 @@ class YearEndRolloverPage extends Page implements HasForms
 
     public function mount(): void
     {
-        $this->form->fill(['year' => now()->year]);
+        $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+        $this->form->fill(['year' => $fiscalYear]);
     }
 
     public function form(Form $form): Form
     {
+        $fiscalService = app(\App\Services\FiscalYearService::class);
+        $current = $fiscalService->currentFiscalYear();
+
+        $options = collect(range($current - 2, $current + 1))
+            ->mapWithKeys(fn($y) => [$y => "السنة المالية {$fiscalService->label($y)} (تبدأ 1-7 وتنتهي 30-6)"])
+            ->toArray();
+
         return $form->schema([
             Select::make('year')
-                ->label('السنة')
-                ->options(collect(range(now()->year - 2, now()->year + 1))
-                    ->mapWithKeys(fn($y) => [$y => (string) $y])
-                    ->toArray())
-                ->default(now()->year)
+                ->label('السنة المالية المستهدفة')
+                ->options($options)
+                ->default($current)
+                ->helperText('عملية الترحيل السنوي: تقوم بتجميع المتبقي من رصيد السنة المنتهية في 30-6 ونقله للرصيد المُرحَّل، ثم منح الرصيد السنوي الجديد بدءاً من 1-7.')
                 ->required(),
         ])->statePath('data');
     }
 
     public function run(): void
     {
-        $year = $this->data['year'] ?? now()->year;
+        $fiscalService = app(\App\Services\FiscalYearService::class);
+        $year = $this->data['year'] ?? $fiscalService->currentFiscalYear();
+        $label = $fiscalService->label($year);
+
         Artisan::call('leave:year-end', ['--year' => $year]);
         $this->output = Artisan::output();
         Notification::make()
             ->success()
-            ->title("تم تجديد الأرصدة لسنة {$year}")
+            ->title("تم تجديد وتجميع الأرصدة للسنة المالية {$label}")
             ->send();
     }
 
     public function dryRun(): void
     {
-        $year = $this->data['year'] ?? now()->year;
+        $fiscalService = app(\App\Services\FiscalYearService::class);
+        $year = $this->data['year'] ?? $fiscalService->currentFiscalYear();
+        $label = $fiscalService->label($year);
+
         Artisan::call('leave:year-end', ['--year' => $year, '--dry-run' => true]);
         $this->output = Artisan::output();
         Notification::make()
             ->info()
-            ->title("معاينة تجديد الأرصدة لسنة {$year} (بدون حفظ)")
+            ->title("معاينة تجديد الأرصدة للسنة المالية {$label} (بدون حفظ)")
             ->send();
     }
 }

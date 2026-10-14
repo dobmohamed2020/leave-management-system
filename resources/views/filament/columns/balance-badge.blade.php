@@ -1,6 +1,5 @@
 {{--
-    عمود رصيد الإجازات في جدول الموظفين.
-    $getRecord() يُعيد مثيل App\Models\Employee.
+    عمود رصيد الإجازات في جدول الموظفين — فصل تام بين رصيد السنة والرصيد المُرحَّل
 --}}
 @php
     /** @var \App\Models\Employee $employee */
@@ -14,19 +13,43 @@
 @if ($balances->isEmpty())
     <span class="text-xs text-gray-400">—</span>
 @else
-    <div class="flex flex-wrap gap-1">
+    <div class="flex flex-wrap items-center gap-1.5">
         @foreach ($balances as $balance)
             @php
-                $typeName  = $balance->leaveType?->name ?? '—';
-                $remaining = number_format($balance->remaining, 0);
-                $entitled  = number_format((float) $balance->entitled + (float) $balance->carried_over, 0);
+                $type = $balance->leaveType;
+                $isRegular = $type?->code === 'regular';
+                $remAnnual = (int) $balance->remaining_entitled;
+                $entitled  = (int) $balance->entitled;
+                $remCarried = (int) $balance->remaining_carried;
+                $carriedTotal = (int) $balance->carried_over;
             @endphp
-            <span
-                class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                title="{{ $typeName }}: المتبقي {{ $remaining }} من {{ $entitled }}"
-            >
-                {{ $typeName }}: {{ $remaining }}/{{ $entitled }}
-            </span>
+
+            @if ($isRegular)
+                {{-- رصيد السنة الحالية --}}
+                <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200"
+                    title="الإجازة الاعتيادية (رصيد السنة): متبقي {{ $remAnnual }} من أصل {{ $entitled }} يوم"
+                >
+                    الاعتيادي: {{ $remAnnual }}/{{ $entitled }}
+                </span>
+
+                {{-- رصيد المرحل المنفصل --}}
+                @if ($carriedTotal > 0 || $balance->used_carried > 0)
+                    <span
+                        class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300"
+                        title="الرصيد المُرحَّل (سنوات سابقة): متبقي {{ $remCarried }} من أصل {{ $carriedTotal }} يوم"
+                    >
+                        المُرحَّل: {{ $remCarried }}/{{ $carriedTotal }}
+                    </span>
+                @endif
+            @else
+                <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200"
+                    title="{{ $type?->name }}: متبقي {{ $remAnnual }} من {{ $entitled }}"
+                >
+                    {{ $type?->name }}: {{ $remAnnual }}/{{ $entitled }}
+                </span>
+            @endif
         @endforeach
     </div>
 @endif

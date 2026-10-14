@@ -21,6 +21,7 @@ class LeaveBalance extends Model
         'entitled',
         'carried_over',
         'used',
+        'used_carried',
     ];
 
     protected $casts = [
@@ -28,6 +29,7 @@ class LeaveBalance extends Model
         'entitled'     => 'integer',
         'carried_over' => 'integer',
         'used'         => 'integer',
+        'used_carried' => 'integer',
     ];
 
     // -------------------------------------------------------------------------
@@ -71,44 +73,53 @@ class LeaveBalance extends Model
     // -------------------------------------------------------------------------
 
     /**
-     * Remaining = entitled + carried_over - used
-     * Never stored — always computed to stay in sync with the ledger.
-     */
-    public function getRemainingAttribute(): int
-    {
-        return max(0, (int) $this->entitled + (int) $this->carried_over - (int) $this->used);
-    }
-
-    /**
-     * الأيام المستهلكة من الرصيد المُرحَّل أولاً (قاعدة استنفاد الرصيد الأقدم).
-     */
-    public function getUsedFromCarriedAttribute(): int
-    {
-        return min((int) $this->used, (int) $this->carried_over);
-    }
-
-    /**
-     * المتبقي من الرصيد المُرحَّل.
-     */
-    public function getRemainingCarriedAttribute(): int
-    {
-        return max(0, (int) $this->carried_over - $this->used_from_carried);
-    }
-
-    /**
-     * الأيام المستهلكة من الرصيد المستحق للسنة الحالية (بعد استنفاد المُرحَّل).
-     */
-    public function getUsedFromEntitledAttribute(): int
-    {
-        return max(0, (int) $this->used - (int) $this->carried_over);
-    }
-
-    /**
-     * المتبقي من الرصيد المستحق للسنة الحالية.
+     * المتبقي من الرصيد السنوي المستحق (منعزل تماماً عن الرصيد المُرحَّل).
+     * Remaining Entitled = entitled - used
      */
     public function getRemainingEntitledAttribute(): int
     {
-        return max(0, (int) $this->entitled - $this->used_from_entitled);
+        return max(0, (int) $this->entitled - (int) $this->used);
+    }
+
+    /**
+     * الأيام المستهلكة من الرصيد المُرحَّل.
+     */
+    public function getUsedFromCarriedAttribute(): int
+    {
+        return (int) ($this->used_carried ?? 0);
+    }
+
+    /**
+     * المتبقي من الرصيد المُرحَّل (منعزل تماماً عن رصيد السنة).
+     * Remaining Carried = carried_over - used_carried
+     */
+    public function getRemainingCarriedAttribute(): int
+    {
+        return max(0, (int) $this->carried_over - (int) $this->used_carried);
+    }
+
+    /**
+     * الأيام المستهلكة من الرصيد المستحق للسنة الحالية.
+     */
+    public function getUsedFromEntitledAttribute(): int
+    {
+        return (int) $this->used;
+    }
+
+    /**
+     * إجمالي الأيام المستهلكة (السنوي + المُرحَّل).
+     */
+    public function getTotalUsedAttribute(): int
+    {
+        return (int) $this->used + (int) $this->used_carried;
+    }
+
+    /**
+     * Remaining = remaining_entitled + remaining_carried
+     */
+    public function getRemainingAttribute(): int
+    {
+        return $this->remaining_entitled + $this->remaining_carried;
     }
 
     // -------------------------------------------------------------------------
@@ -122,6 +133,7 @@ class LeaveBalance extends Model
 
     public function scopeCurrentYear($query)
     {
-        return $query->where('year', now()->year);
+        $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+        return $query->where('year', $fiscalYear);
     }
 }

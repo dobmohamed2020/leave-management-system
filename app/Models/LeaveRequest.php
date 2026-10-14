@@ -26,6 +26,7 @@ class LeaveRequest extends Model
         'employee_id',
         'organization_id',
         'leave_type_id',
+        'deduct_from_carried',
         'substitute_employee_id',
         'start_date',
         'end_date',
@@ -46,6 +47,7 @@ class LeaveRequest extends Model
     ];
 
     protected $casts = [
+        'deduct_from_carried' => 'boolean',
         'start_date'        => 'date',
         'end_date'          => 'date',
         'written_at'        => 'date',

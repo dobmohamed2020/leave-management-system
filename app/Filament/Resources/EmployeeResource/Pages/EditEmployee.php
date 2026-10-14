@@ -146,7 +146,8 @@ class EditEmployee extends EditRecord
                     ->send();
             } else {
                 $service = app(\App\Services\LeaveBalanceService::class);
-                $balance = $service->getOrCreateBalance($this->record, $regularType, now()->year);
+                $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+                $balance = $service->getOrCreateBalance($this->record, $regularType, $fiscalYear);
                 $target  = max(0, $this->targetCarriedOverDays);
 
                 if ((int) $balance->carried_over !== $target) {

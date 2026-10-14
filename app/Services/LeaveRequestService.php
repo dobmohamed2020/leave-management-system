@@ -55,7 +55,10 @@ class LeaveRequestService
         }
 
         $leaveType = LeaveType::findOrFail($data['leave_type_id']);
-        $year      = now()->year;
+        $fiscalYear = app(FiscalYearService::class)->fiscalYearFor(
+            isset($data['start_date']) ? \Carbon\Carbon::parse($data['start_date']) : null
+        );
+        $deductFromCarried = (bool) ($data['deduct_from_carried'] ?? false);
 
         $warnings = [];
 
@@ -74,7 +77,7 @@ class LeaveRequestService
         }
 
         // ---- Sufficient balance ----
-        $balanceRule = new SufficientBalanceRule($employee, $leaveType, $year);
+        $balanceRule = new SufficientBalanceRule($employee, $leaveType, $fiscalYear, $deductFromCarried);
         $balanceRule->validate('days', $data['days'], fn($msg) => throw ValidationException::withMessages(['days' => $msg]));
         if ($balanceRule->warning) {
             $warnings[] = $balanceRule->warning;
@@ -135,17 +138,18 @@ class LeaveRequestService
         // ---- Persist ----
         $request = DB::transaction(function () use ($data, $createdBy, $employee) {
             return LeaveRequest::create([
-                'employee_id'           => $employee->id,
-                'organization_id'       => $employee->organization_id,
-                'leave_type_id'         => $data['leave_type_id'],
+                'employee_id'            => $employee->id,
+                'organization_id'        => $employee->organization_id,
+                'leave_type_id'          => $data['leave_type_id'],
+                'deduct_from_carried'    => $deductFromCarried,
                 'substitute_employee_id' => $data['substitute_employee_id'] ?? null,
-                'start_date'            => $data['start_date'],
-                'end_date'              => $data['end_date'],
-                'days'                  => $data['days'],
-                'written_at'            => $data['written_at'] ?? null,
-                'reason'                => isset($data['reason']) ? trim((string) $data['reason']) : null,
-                'status'                => LeaveStatus::DRAFT,
-                'created_by'            => $createdBy->id,
+                'start_date'             => $data['start_date'],
+                'end_date'               => $data['end_date'],
+                'days'                   => $data['days'],
+                'written_at'             => $data['written_at'] ?? null,
+                'reason'                 => isset($data['reason']) ? trim((string) $data['reason']) : null,
+                'status'                 => LeaveStatus::DRAFT,
+                'created_by'             => $createdBy->id,
             ]);
         });
 
@@ -355,16 +359,17 @@ class LeaveRequestService
 
                 // Deduct balance only if leave type requires it
                 if ($request->leaveType->deducts_balance) {
+                    $reqFiscalYear = app(FiscalYearService::class)->fiscalYearFor($request->start_date);
                     $balance = $this->balanceService->getOrCreateBalance(
                         $request->employee,
                         $request->leaveType,
-                        now()->year
+                        $reqFiscalYear
                     );
                     $this->balanceService->deduct($balance, (int) $request->days, $request, $actedBy);
 
                     $balance->refresh();
-                    $request->balance_used      = $balance->used;
-                    $request->balance_remaining = $balance->remaining;
+                    $request->balance_used      = $balance->total_used;
+                    $request->balance_remaining = $request->deduct_from_carried ? $balance->remaining_carried : $balance->remaining_entitled;
                     $request->save();
                 }
 

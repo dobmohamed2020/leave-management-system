@@ -460,13 +460,87 @@ class EmployeeResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
+
+                // أيقونة كشف حساب الرصيد المُرحَّل مع الدرجة والتواريخ والاستهلاك
+                Tables\Actions\Action::make('carried_balance_ledger')
+                    ->label('الرصيد المُرحَّل')
+                    ->icon('heroicon-o-archive-box')
+                    ->color('warning')
+                    ->modalHeading(fn (Employee $record): string => "كشف حساب الرصيد المُرحَّل — {$record->full_name}")
+                    ->modalWidth('4xl')
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('إغلاق')
+                    ->modalContent(fn (Employee $record) => view('filament.modals.carried-balance-modal', ['employee' => $record])),
+
                 Tables\Actions\Action::make('leave_history')
                     ->label('تاريخ الإجازات')
                     ->icon('heroicon-o-calendar-days')
                     ->color('info')
                     ->url(fn (Employee $record): string => EmployeeResource::getUrl('leave-history', ['record' => $record->id]))
                     ->openUrlInNewTab(false),
-                Tables\Actions\DeleteAction::make(),
+
+                // للمدارس: طلب اعتماد حذف موظف من مدير الإدارة
+                Tables\Actions\Action::make('request_employee_deletion')
+                    ->label('طلب حذف')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->visible(fn (): bool => static::isSchoolActor())
+                    ->form([
+                        Forms\Components\Textarea::make('reason')
+                            ->label('سبب طلب حذف الموظف')
+                            ->required()
+                            ->maxLength(500)
+                            ->placeholder('اكتب سبب طلب حذف الموظف بالتفصيل لإرساله إلى مدير الإدارة للاعتماد...'),
+                    ])
+                    ->action(function (Employee $record, array $data): void {
+                        \App\Models\DeletionRequest::create([
+                            'organization_id' => auth()->user()->organization_id,
+                            'model_type'      => 'employee',
+                            'model_id'        => $record->id,
+                            'title'           => "طلب حذف الموظف: {$record->full_name} (كود: {$record->employee_code})",
+                            'details'         => [
+                                'employee_code' => $record->employee_code,
+                                'full_name'     => $record->full_name,
+                                'job_title'     => $record->job_title,
+                                'grade'         => $record->entitlementGrade?->name,
+                                'phone'         => $record->phone,
+                            ],
+                            'reason'          => $data['reason'],
+                            'requested_by'    => auth()->id(),
+                            'status'          => 'pending',
+                        ]);
+
+                        Notification::make()
+                            ->success()
+                            ->title('تم إرسال طلب حذف الموظف لمدير الإدارة للاعتماد')
+                            ->send();
+                    }),
+
+                // لمدير الإدارة والآدمن: حذف نهائي شامل Cascade للموظف وكافة متعلقاته
+                Tables\Actions\Action::make('force_delete_employee')
+                    ->label('حذف نهائي شامل')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Employee $record) => "تأكيد الحذف النهائي الشامل للموظف: {$record->full_name}")
+                    ->modalDescription('تحذير شديد الخطورة: سيتم حذف الموظف نهائياً وحذف كافة طلبات إجازاته ومرفقاتها وسجل حركات الأرصدة وحساب الدخول نهائياً من قاعدة البيانات بلا رجعة. هل أنت متأكد تماماً؟')
+                    ->modalSubmitActionLabel('نعم، احذف نهائياً بلا رجعة')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (): bool =>
+                        (bool) (auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || auth()->user()?->hasPermissionTo('manage_organization'))
+                    )
+                    ->action(function (Employee $record): void {
+                        $name = $record->full_name;
+                        app(\App\Services\CascadeDeletionService::class)->deleteEmployeePermanently($record, auth()->user());
+                        Notification::make()
+                            ->success()
+                            ->title("تم حذف الموظف [{$name}] نهائياً مع كافة إجازاته وأرصدته ومتعلقاته")
+                            ->send();
+                    }),
+
+                Tables\Actions\DeleteAction::make()
+                    ->visible(fn (): bool => ! static::isSchoolActor()),
             ])
             ->bulkActions([
                 Tables\Actions\BulkAction::make('renewBalances')
@@ -604,7 +678,7 @@ class EmployeeResource extends Resource
                         Infolists\Components\Tabs\Tab::make('رصيد الإجازات')
                             ->icon('heroicon-o-calculator')
                             ->schema([
-                                Infolists\Components\Section::make('رصيد السنة الحالية — ' . now()->year)
+                                Infolists\Components\Section::make(fn (): string => 'رصيد السنة المالية — ' . app(\App\Services\FiscalYearService::class)->label(app(\App\Services\FiscalYearService::class)->currentFiscalYear()))
                                     ->schema([
                                         Infolists\Components\RepeatableEntry::make('currentYearBalances')
                                             ->label('')
@@ -614,45 +688,53 @@ class EmployeeResource extends Resource
                                                     ->currentYear()
                                                     ->get()
                                                     ->map(fn ($b) => [
-                                                        'leave_type'        => $b->leaveType?->name ?? '—',
-                                                        'entitled'          => (int) $b->entitled,
-                                                        'carried'           => (int) $b->carried_over,
-                                                        'used_from_carried' => (int) $b->used_from_carried,
-                                                        'used'              => (int) $b->used,
-                                                        'remaining'         => (int) $b->remaining,
+                                                        'leave_type'         => $b->leaveType?->name ?? '—',
+                                                        'entitled'           => (int) $b->entitled,
+                                                        'used'               => (int) $b->used,
+                                                        'remaining_entitled' => (int) $b->remaining_entitled,
+                                                        'carried'            => (int) $b->carried_over,
+                                                        'used_from_carried'  => (int) $b->used_carried,
+                                                        'remaining_carried'  => (int) $b->remaining_carried,
+                                                        'total_remaining'    => (int) $b->remaining,
                                                     ])
                                                     ->toArray()
                                             )
-                                            ->columns(6)
+                                            ->columns(7)
                                             ->schema([
                                                 Infolists\Components\TextEntry::make('leave_type')
                                                     ->label('نوع الإجازة')
                                                     ->weight(\Filament\Support\Enums\FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('entitled')
-                                                    ->label('المستحق')
+                                                    ->label('مستحق السنة')
                                                     ->suffix(' يوم')
                                                     ->color('primary'),
 
+                                                Infolists\Components\TextEntry::make('used')
+                                                    ->label('مستهلك السنة')
+                                                    ->suffix(' يوم')
+                                                    ->color('gray'),
+
+                                                Infolists\Components\TextEntry::make('remaining_entitled')
+                                                    ->label('متبقي السنة')
+                                                    ->suffix(' يوم')
+                                                    ->color('success')
+                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+
                                                 Infolists\Components\TextEntry::make('carried')
-                                                    ->label('المُرحَّل')
+                                                    ->label('إجمالي المُرحَّل')
                                                     ->suffix(' يوم')
                                                     ->color('info'),
 
                                                 Infolists\Components\TextEntry::make('used_from_carried')
-                                                    ->label('مستخدم من المُرحَّل')
+                                                    ->label('مستهلك من المُرحَّل')
                                                     ->suffix(' يوم')
                                                     ->color('warning'),
 
-                                                Infolists\Components\TextEntry::make('used')
-                                                    ->label('إجمالي المستخدم')
+                                                Infolists\Components\TextEntry::make('remaining_carried')
+                                                    ->label('متبقي المُرحَّل')
                                                     ->suffix(' يوم')
-                                                    ->color('danger'),
-
-                                                Infolists\Components\TextEntry::make('remaining')
-                                                    ->label('المتبقي')
-                                                    ->suffix(' يوم')
-                                                    ->color(fn ($state): string => ((int) $state) > 0 ? 'success' : 'danger')
+                                                    ->color('success')
                                                     ->weight(\Filament\Support\Enums\FontWeight::Bold),
                                             ]),
                                     ]),

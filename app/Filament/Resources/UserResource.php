@@ -170,6 +170,27 @@ class UserResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
+                Tables\Actions\Action::make('force_delete_user')
+                    ->label('حذف نهائي شامل')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (User $record) => "تأكيد الحذف النهائي الشامل للمستخدم: {$record->name}")
+                    ->modalDescription('تحذير شديد: سيتم حذف المستخدم نهائياً وحذف ملف الموظف التابع له وجميع طلبات إجازاته وأرصدته من قاعدة البيانات بلا رجعة. هل أنت متأكد؟')
+                    ->modalSubmitActionLabel('نعم، احذف نهائياً')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (): bool =>
+                        (bool) (auth()->user()?->hasRole(['مدير المديرية', 'مدير عام', 'مدير الإدارة'])
+                            || auth()->user()?->hasPermissionTo('manage_organization'))
+                    )
+                    ->action(function (User $record): void {
+                        $name = $record->name;
+                        app(\App\Services\CascadeDeletionService::class)->deleteUserPermanently($record, auth()->user());
+                        Notification::make()
+                            ->success()
+                            ->title("تم حذف المستخدم [{$name}] نهائياً مع كافة متعلقاته")
+                            ->send();
+                    }),
                 Tables\Actions\DeleteAction::make(),
             ])
             ->defaultSort('name');

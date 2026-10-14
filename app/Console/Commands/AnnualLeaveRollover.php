@@ -39,8 +39,10 @@ class AnnualLeaveRollover extends Command
      */
     public function handle(): int
     {
-        $year      = (int) ($this->option('year') ?? now()->year);
-        $isDryRun  = (bool) $this->option('dry-run');
+        $fiscalService = app(\App\Services\FiscalYearService::class);
+        $year          = (int) ($this->option('year') ?? $fiscalService->currentFiscalYear());
+        $isDryRun      = (bool) $this->option('dry-run');
+        $label         = $fiscalService->label($year);
 
         $employees = Employee::with(['leaveBalances', 'entitlementGrade'])
             ->where('is_active', true)
@@ -70,9 +72,9 @@ class AnnualLeaveRollover extends Command
 
         if ($isDryRun) {
             DB::rollBack();
-            $this->info("(معاينة) سيتم تجديد أرصدة {$count} موظف لسنة {$year} — لم يُحفَظ شيء.");
+            $this->info("(معاينة) سيتم تجديد وتجميع الأرصدة المُرحَّلة لـ {$count} موظف للسنة المالية {$label} — لم يُحفَظ شيء.");
         } else {
-            $this->info("تم تجديد أرصدة {$count} موظف لسنة {$year} بنجاح.");
+            $this->info("تم تجميع الأرصدة وتجديد السنة المالية {$label} بنجاح لـ {$count} موظف.");
         }
 
         return Command::SUCCESS;

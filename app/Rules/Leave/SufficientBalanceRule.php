@@ -26,6 +26,7 @@ class SufficientBalanceRule implements ValidationRule
         private readonly Employee $employee,
         private readonly LeaveType $leaveType,
         private readonly int $year,
+        private readonly bool $deductFromCarried = false,
     ) {}
 
     public function validate(string $attribute, mixed $value, Closure $fail): void
@@ -36,15 +37,23 @@ class SufficientBalanceRule implements ValidationRule
         }
 
         $balance = $this->employee->balanceFor($this->leaveType->id, $this->year);
-        $remaining = $balance ? $balance->remaining : 0.0;
         $requested = (float) $value;
+
+        if ($this->deductFromCarried) {
+            $remaining = $balance ? (float) $balance->remaining_carried : 0.0;
+            $balanceName = 'الرصيد المُرحَّل';
+        } else {
+            $remaining = $balance ? (float) $balance->remaining_entitled : 0.0;
+            $balanceName = 'رصيد السنة الحالية';
+        }
 
         if ($remaining >= $requested) {
             return;
         }
 
         $msg = sprintf(
-            'رصيدك المتبقي (%.1f يوم) أقل من المطلوب (%.1f يوم).',
+            '%s المتبقي (%.1f يوم) أقل من المطلوب (%.1f يوم).',
+            $balanceName,
             $remaining,
             $requested
         );

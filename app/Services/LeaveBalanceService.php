@@ -25,8 +25,10 @@ class LeaveBalanceService
     public function getOrCreateBalance(
         Employee $employee,
         LeaveType $leaveType,
-        int $year
+        ?int $year = null
     ): LeaveBalance {
+        $year = $year ?? app(FiscalYearService::class)->currentFiscalYear();
+
         $entitled = $leaveType->code === 'regular'
             ? $employee->regularLeaveEntitlement()
             : (int) $leaveType->yearly_entitlement;
@@ -38,9 +40,10 @@ class LeaveBalanceService
                 'year'          => $year,
             ],
             [
-                'entitled'     => $entitled,
-                'carried_over' => 0,
-                'used'         => 0,
+                'entitled'      => $entitled,
+                'carried_over'  => 0,
+                'used'          => 0,
+                'used_carried'  => 0,
             ]
         );
     }
@@ -51,7 +54,7 @@ class LeaveBalanceService
 
     /**
      * Deduct days from a balance when a leave request is approved.
-     * Increments leave_balances.used and writes a DEDUCTION transaction.
+     * Increments used_carried if deduct_from_carried is true, otherwise used.
      */
     public function deduct(
         LeaveBalance $balance,
@@ -63,15 +66,22 @@ class LeaveBalanceService
             // Lock the row to prevent concurrent double-deductions
             $balance = LeaveBalance::lockForUpdate()->findOrFail($balance->id);
 
+            $isCarried = (bool) $request->deduct_from_carried;
+
             $transaction = LeaveBalanceTransaction::create([
                 'leave_balance_id' => $balance->id,
                 'leave_request_id' => $request->id,
                 'type'             => TransactionType::DEDUCTION,
                 'days'             => $days,
+                'note'             => $isCarried ? 'خصم من الرصيد المُرحَّل' : 'خصم من رصيد السنة الحالية',
                 'created_by'       => $actedBy->id,
             ]);
 
-            $balance->increment('used', $days);
+            if ($isCarried) {
+                $balance->increment('used_carried', $days);
+            } else {
+                $balance->increment('used', $days);
+            }
 
             return $transaction;
         });
@@ -79,7 +89,6 @@ class LeaveBalanceService
 
     /**
      * Refund days back to a balance when a leave request is cancelled/rejected.
-     * Decrements used (floored at 0) and writes a REFUND transaction.
      */
     public function refund(
         LeaveBalance $balance,
@@ -90,17 +99,26 @@ class LeaveBalanceService
         return DB::transaction(function () use ($balance, $days, $request, $actedBy) {
             $balance = LeaveBalance::lockForUpdate()->findOrFail($balance->id);
 
+            $isCarried = (bool) $request->deduct_from_carried;
+
             $transaction = LeaveBalanceTransaction::create([
                 'leave_balance_id' => $balance->id,
                 'leave_request_id' => $request->id,
                 'type'             => TransactionType::REFUND,
                 'days'             => $days,
+                'note'             => $isCarried ? 'استرداد إلى الرصيد المُرحَّل' : 'استرداد إلى رصيد السنة الحالية',
                 'created_by'       => $actedBy->id,
             ]);
 
-            $balance->update([
-                'used' => max(0, (int) $balance->used - $days),
-            ]);
+            if ($isCarried) {
+                $balance->update([
+                    'used_carried' => max(0, (int) $balance->used_carried - $days),
+                ]);
+            } else {
+                $balance->update([
+                    'used' => max(0, (int) $balance->used - $days),
+                ]);
+            }
 
             return $transaction;
         });
@@ -141,12 +159,13 @@ class LeaveBalanceService
     }
 
     // -------------------------------------------------------------------------
-    // Year-end Operations
+    // Year-end Operations (كل 30-6)
     // -------------------------------------------------------------------------
 
     /**
      * Carry over remaining days from fromYear into toYear for all deductible
      * leave types of the given employee.
+     * تجميع الرصيد المتبقي بنهاية السنة في 30-6 وإضافته إلى رصيد الموظف المُرحَّل للسنة الجديدة
      */
     public function carryOver(Employee $employee, int $fromYear, int $toYear): void
     {
@@ -155,12 +174,21 @@ class LeaveBalanceService
             ->where('year', $fromYear)
             ->get()
             ->filter(fn(LeaveBalance $bal) =>
-                $bal->leaveType->deducts_balance && $bal->remaining > 0
+                $bal->leaveType && $bal->leaveType->deducts_balance
             );
 
         foreach ($balances as $bal) {
+            // المتبقي من رصيد السنة الاعتيادي المنتهية + المتبقي من المرحل غير المستهلك
+            $remainingAnnual  = $bal->remaining_entitled;
+            $remainingCarried = $bal->remaining_carried;
+            $totalCarryDays   = $remainingAnnual + $remainingCarried;
+
+            if ($totalCarryDays <= 0) {
+                continue;
+            }
+
             $maxCarry  = config('leave.carry_over_max_days') ?? PHP_INT_MAX;
-            $carryDays = min($bal->remaining, $maxCarry);
+            $carryDays = min($totalCarryDays, $maxCarry);
 
             $toBalance = $this->getOrCreateBalance($employee, $bal->leaveType, $toYear);
 
@@ -169,21 +197,20 @@ class LeaveBalanceService
                 continue;
             }
 
-            DB::transaction(function () use ($toBalance, $carryDays, $bal) {
+            DB::transaction(function () use ($toBalance, $carryDays, $bal, $fromYear) {
                 $toBalance = LeaveBalance::lockForUpdate()->findOrFail($toBalance->id);
 
                 LeaveBalanceTransaction::create([
                     'leave_balance_id' => $toBalance->id,
                     'type'             => TransactionType::CARRYOVER,
                     'days'             => $carryDays,
+                    'note'             => "ترحيل رصيد متبقي من سنة {$fromYear} المنتهية في 30-6",
                 ]);
 
-                $toBalance->increment('carried_over', $carryDays);
-
-                // تصفير رصيد سنة المصدر لمنع إعادة الترحيل
-                $bal->refresh();
-                $bal->carried_over = 0;
-                $bal->save();
+                $toBalance->update([
+                    'carried_over' => $carryDays,
+                    'used_carried' => 0,
+                ]);
             });
         }
     }

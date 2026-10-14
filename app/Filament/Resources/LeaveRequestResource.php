@@ -82,6 +82,37 @@ class LeaveRequestResource extends Resource
                         ->required()
                         ->reactive(),
 
+                    Forms\Components\Radio::make('deduct_from_carried')
+                        ->label('الخصم من الرصيد')
+                        ->options(function (Forms\Get $get): array {
+                            $employeeId = $get('employee_id');
+                            if (! $employeeId) {
+                                return [
+                                    0 => 'رصيد السنة الحالية',
+                                    1 => 'الرصيد المُرحَّل (سنوات سابقة)',
+                                ];
+                            }
+                            $emp = Employee::withoutGlobalScopes()->find($employeeId);
+                            $regType = LeaveType::where('code', 'regular')->first();
+                            $bal = $emp && $regType ? $emp->balanceFor($regType->id) : null;
+                            $remAnnual = $bal ? $bal->remaining_entitled : 0;
+                            $remCarried = $bal ? $bal->remaining_carried : 0;
+
+                            return [
+                                0 => "رصيد السنة الحالية (المتاح: {$remAnnual} يوم)",
+                                1 => "الرصيد المُرحَّل (المتاح: {$remCarried} يوم)",
+                            ];
+                        })
+                        ->default(0)
+                        ->boolean()
+                        ->visible(function (Forms\Get $get): bool {
+                            $leaveTypeId = $get('leave_type_id');
+                            if (! $leaveTypeId) return false;
+                            $type = LeaveType::find($leaveTypeId);
+                            return $type && $type->isRegular();
+                        })
+                        ->helperText('اختر جهة الخصم: رصيد السنة الحالية أم الرصيد المُرحَّل.'),
+
                     Forms\Components\DatePicker::make('start_date')
                         ->label('تاريخ البداية')
                         ->required()
@@ -324,6 +355,10 @@ class LeaveRequestResource extends Resource
 
                 Tables\Columns\TextColumn::make('leaveType.name')
                     ->label('نوع الإجازة')
+                    ->formatStateUsing(fn ($state, LeaveRequest $record): string =>
+                        $record->deduct_from_carried ? "{$state} (مُرحَّل)" : (string) $state
+                    )
+                    ->color(fn (LeaveRequest $record): ?string => $record->deduct_from_carried ? 'warning' : null)
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('start_date')
@@ -430,6 +465,69 @@ class LeaveRequestResource extends Resource
                 Tables\Actions\EditAction::make()
                     ->visible(fn (LeaveRequest $record): bool => Auth::user()?->can('update', $record) ?? false),
 
+                // للمدارس: إرسال طلب اعتماد حذف لمدير الإدارة
+                Tables\Actions\Action::make('request_deletion')
+                    ->label('طلب حذف')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->visible(fn (LeaveRequest $record): bool =>
+                        (Auth::user()?->organization?->isSchool() ?? false)
+                        && ! in_array($record->status, [LeaveStatus::CANCELLED])
+                    )
+                    ->form([
+                        Forms\Components\Textarea::make('reason')
+                            ->label('سبب طلب حذف الإجازة')
+                            ->required()
+                            ->maxLength(500)
+                            ->placeholder('اكتب سبب طلب الحذف لإرساله إلى مدير الإدارة للاعتماد...'),
+                    ])
+                    ->action(function (LeaveRequest $record, array $data): void {
+                        \App\Models\DeletionRequest::create([
+                            'organization_id' => Auth::user()->organization_id,
+                            'model_type'      => 'leave_request',
+                            'model_id'        => $record->id,
+                            'title'           => "طلب حذف إجازة: {$record->number} ({$record->employee?->full_name})",
+                            'details'         => [
+                                'leave_number'  => $record->number,
+                                'employee_name' => $record->employee?->full_name,
+                                'leave_type'    => $record->leaveType?->name,
+                                'start_date'    => $record->start_date?->format('Y-m-d'),
+                                'end_date'      => $record->end_date?->format('Y-m-d'),
+                                'days'          => $record->days,
+                            ],
+                            'reason'          => $data['reason'],
+                            'requested_by'    => Auth::id(),
+                            'status'          => 'pending',
+                        ]);
+
+                        Notification::make()
+                            ->success()
+                            ->title('تم إرسال طلب الحذف لمدير الإدارة للاعتماد')
+                            ->send();
+                    }),
+
+                // لمدير الإدارة والآدمن: حذف نهائي شامل Cascade
+                Tables\Actions\Action::make('force_delete_request')
+                    ->label('حذف نهائي شامل')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('تأكيد الحذف النهائي الشامل لطلب الإجازة')
+                    ->modalDescription('تحذير شديد: سيتم حذف طلب الإجازة وجميع المرفقات وحركات الرصيد المرتبطة به نهائياً من قاعدة البيانات بلا رجعة. هل أنت متأكد؟')
+                    ->modalSubmitActionLabel('نعم، احذف نهائياً')
+                    ->modalCancelActionLabel('إلغاء')
+                    ->visible(fn (LeaveRequest $record): bool =>
+                        (bool) (Auth::user()?->hasRole(['مدير الإدارة', 'مدير المديرية', 'مدير عام'])
+                            || Auth::user()?->hasPermissionTo('manage_organization'))
+                    )
+                    ->action(function (LeaveRequest $record): void {
+                        app(\App\Services\CascadeDeletionService::class)->deleteLeaveRequestPermanently($record, Auth::user());
+                        Notification::make()
+                            ->success()
+                            ->title("تم حذف طلب الإجازة {$record->number} نهائياً مع كافة متعلقاته")
+                            ->send();
+                    }),
+
                 Tables\Actions\DeleteAction::make()
                     ->label('حذف')
                     ->requiresConfirmation()
@@ -437,7 +535,10 @@ class LeaveRequestResource extends Resource
                     ->modalDescription('سيتم تعليم الطلب كـ «تم حذفه».')
                     ->modalSubmitActionLabel('نعم، احذف')
                     ->modalCancelActionLabel('إلغاء')
-                    ->visible(fn (LeaveRequest $record): bool => Auth::user()?->can('delete', $record) ?? false)
+                    ->visible(fn (LeaveRequest $record): bool =>
+                        ! (Auth::user()?->organization?->isSchool() ?? false)
+                        && (Auth::user()?->can('delete', $record) ?? false)
+                    )
                     ->before(function (LeaveRequest $record): void {
                         if ($record->status !== LeaveStatus::CANCELLED && $record->status->canBeCancelled()) {
                             try {
