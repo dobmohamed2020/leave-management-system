@@ -21,13 +21,15 @@ class Employee extends Model
 
         static::saved(function (Employee $employee) {
             if ($employee->promotion_date && ($employee->grade || $employee->entitlement_grade)) {
+                $gradeName = $employee->grade ?? $employee->entitlementGrade?->name ?? 'غير محددة';
                 $exists = $employee->promotions()
-                    ->where('promotion_date', $employee->promotion_date->format('Y-m-d'))
+                    ->whereDate('promotion_date', $employee->promotion_date)
+                    ->where('grade', $gradeName)
                     ->exists();
 
                 if (! $exists) {
                     $employee->promotions()->create([
-                        'grade'             => $employee->grade ?? $employee->entitlementGrade?->name ?? 'غير محددة',
+                        'grade'             => $gradeName,
                         'entitlement_grade' => $employee->entitlement_grade,
                         'promotion_date'    => $employee->promotion_date,
                         'decision_number'   => $employee->promotion_decision_number,
@@ -157,21 +159,25 @@ class Employee extends Model
     ): EmployeePromotion {
         $promoDate = $promotionDate ? \Carbon\Carbon::parse($promotionDate) : now();
 
-        $promo = $this->promotions()->create([
-            'grade'             => $grade,
-            'entitlement_grade' => $entitlementGrade ?? $this->entitlement_grade,
-            'promotion_date'    => $promoDate,
-            'decision_number'   => $decisionNumber,
-            'notes'             => $notes,
-            'created_by'        => $userId ?? auth()->id(),
-        ]);
-
-        $this->update([
+        $this->updateQuietly([
             'grade'                     => $grade,
             'entitlement_grade'         => $entitlementGrade ?? $this->entitlement_grade,
             'promotion_date'            => $promoDate,
             'promotion_decision_number' => $decisionNumber,
         ]);
+
+        $promo = $this->promotions()->firstOrCreate(
+            [
+                'promotion_date' => $promoDate->format('Y-m-d'),
+                'grade'          => $grade,
+            ],
+            [
+                'entitlement_grade' => $entitlementGrade ?? $this->entitlement_grade,
+                'decision_number'   => $decisionNumber,
+                'notes'             => $notes,
+                'created_by'        => $userId ?? auth()->id(),
+            ]
+        );
 
         return $promo;
     }

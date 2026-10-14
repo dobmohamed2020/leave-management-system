@@ -7,6 +7,10 @@ Route::get('/', function () {
     return redirect('/admin');
 });
 
+Route::get('/login', function () {
+    return redirect('/admin/login');
+})->name('login');
+
 // Render / load balancer health check
 Route::get('/healthz', fn () => response('ok', 200));
 

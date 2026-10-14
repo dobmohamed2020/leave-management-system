@@ -588,4 +588,145 @@ it('verifies Point 13: restore from normal deletion in DeletionRequest updates r
         ->and($employee->fresh()->is_active)->toBeTrue();
 });
 
+it('verifies Point 14: records employee promotions and career grades history with decision numbers and dates', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+
+    // 1. Record an initial promotion
+    $promo1 = $employee->recordPromotion(
+        grade: 'معلم أول',
+        entitlementGrade: null,
+        promotionDate: '2020-09-01',
+        decisionNumber: 'قرار وزاري رقم 100 لسنة 2020',
+        notes: 'ترقية دورية',
+        userId: $adminUser->id
+    );
+
+    // 2. Record a subsequent promotion
+    $promo2 = $employee->recordPromotion(
+        grade: 'معلم أول أ',
+        entitlementGrade: null,
+        promotionDate: '2024-03-01',
+        decisionNumber: 'قرار وزاري رقم 250 لسنة 2024',
+        notes: 'ترقية بالأقدمية',
+        userId: $adminUser->id
+    );
+
+    $employee->refresh();
+
+    // Check employee current fields
+    expect($employee->grade)->toBe('معلم أول أ')
+        ->and($employee->promotion_date->format('Y-m-d'))->toBe('2024-03-01')
+        ->and($employee->promotion_decision_number)->toBe('قرار وزاري رقم 250 لسنة 2024');
+
+    // Check promotions history relationship
+    $history = $employee->promotions;
+    expect($history)->toHaveCount(2)
+        ->and($history->first()->grade)->toBe('معلم أول أ')
+        ->and($history->last()->grade)->toBe('معلم أول');
+});
+
+it('verifies Point 15: EmployeeReportService compiles comprehensive report including promotions, isolated carried balances, requests, and audit trail', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $regularType = $ctx['regularType'];
+    $adminUser = $ctx['adminUser'];
+
+    // 1. Setup promotion
+    $employee->recordPromotion(
+        grade: 'كبير معلمين',
+        entitlementGrade: null,
+        promotionDate: '2023-01-15',
+        decisionNumber: 'قرار رقم 44',
+        notes: 'ترقية ممتازة',
+        userId: $adminUser->id
+    );
+
+    // 2. Setup balance with isolated carried-over
+    $fiscalYear = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+    LeaveBalance::updateOrCreate(
+        [
+            'employee_id'   => $employee->id,
+            'leave_type_id' => $regularType->id,
+            'year'          => $fiscalYear,
+        ],
+        [
+            'entitled'      => 30,
+            'carried_over'  => 10,
+            'used'          => 5,
+            'used_carried'  => 3,
+        ]
+    );
+
+    // 3. Create leave request
+    LeaveRequest::withoutGlobalScopes()->create([
+        'number'              => 'LV-REP-001',
+        'employee_id'         => $employee->id,
+        'organization_id'     => $ctx['school']->id,
+        'leave_type_id'       => $regularType->id,
+        'deduct_from_carried' => true,
+        'start_date'          => '2026-11-01',
+        'end_date'            => '2026-11-03',
+        'days'                => 3,
+        'status'              => LeaveStatus::APPROVED->value,
+        'created_by'          => $adminUser->id,
+    ]);
+
+    // 4. Run report service
+    $service = app(\App\Services\EmployeeReportService::class);
+    $data = $service->getReportData($employee);
+
+    expect($data)->toHaveKeys(['employee', 'basicInfo', 'promotionsData', 'balancesData', 'requestsData', 'auditTrail'])
+        ->and($data['basicInfo']['full_name'])->toBe($employee->full_name)
+        ->and($data['promotionsData']['current_grade'])->toBe('كبير معلمين')
+        ->and($data['promotionsData']['decision_number'])->toBe('قرار رقم 44')
+        ->and($data['promotionsData']['promotions_history'])->toHaveCount(1)
+        ->and($data['balancesData']['regular']['carried_total'])->toBe(10)
+        ->and($data['balancesData']['regular']['used_carried'])->toBe(3)
+        ->and($data['balancesData']['regular']['remaining_carried'])->toBe(7)
+        ->and($data['requestsData']['approved_count'])->toBe(1)
+        ->and($data['auditTrail'])->toBeArray();
+});
+
+it('verifies Point 16: authenticated route /employee-report/{id} returns comprehensive printable Arabic report and enforces organization authorization', function () {
+    $ctx = setupRequirementsTest();
+    $employee = $ctx['employee'];
+    $adminUser = $ctx['adminUser'];
+
+    // 1. Guest is redirected / unauthorized
+    $guestResponse = $this->get("/employee-report/{$employee->id}");
+    $guestResponse->assertRedirect();
+
+    // 2. Authorized admin user gets 200 and native Arabic print view
+    $authResponse = $this->actingAs($adminUser)->get("/employee-report/{$employee->id}");
+    $authResponse->assertOk()
+        ->assertSee($employee->full_name)
+        ->assertSee('بيان حالة وإجازات وترقيات موظف شامل')
+        ->assertSee('الرصيد المُرحَّل')
+        ->assertSee('الدرجات الوظيفية وسجل الترقيات');
+
+    // 3. User from unrelated organization is rejected with 403
+    $otherOrg = Organization::withoutGlobalScopes()->create([
+        'name'      => 'إدارة إسنا التعليمية',
+        'type'      => OrganizationType::ADMINISTRATION,
+        'code'      => 'ADM-ESNA',
+        'path'      => '/999/',
+        'depth'     => 1,
+        'is_active' => true,
+    ]);
+
+    $otherUser = User::create([
+        'name'            => 'موظف إدارة أخرى',
+        'email'           => 'other_admin@example.com',
+        'password'        => bcrypt('password'),
+        'organization_id' => $otherOrg->id,
+        'is_active'       => true,
+    ]);
+
+    $forbiddenResponse = $this->actingAs($otherUser)->get("/employee-report/{$employee->id}");
+    $forbiddenResponse->assertForbidden();
+});
+
+
 

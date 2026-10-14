@@ -285,7 +285,7 @@ class EmployeeReportService
                 'event'       => $tx->type->value ?? 'transaction',
                 'description' => "حركة رصيد: " . ($tx->type->label() ?? 'حركة'),
                 'causer_name' => $tx->createdBy?->name ?? 'النظام',
-                'details'     => ($tx->amount > 0 ? "+{$tx->amount}" : "{$tx->amount}") . " يوم — " . ($tx->note ?? 'لا توجد ملاحظات') . ($tx->leaveRequest ? " (طلب #{$tx->leaveRequest->number})" : ''),
+                'details'     => ($tx->days > 0 ? "+{$tx->days}" : "{$tx->days}") . " يوم — " . ($tx->note ?? 'لا توجد ملاحظات') . ($tx->leaveRequest ? " (طلب #{$tx->leaveRequest->number})" : ''),
                 'badge_color' => match ($tx->type->value ?? '') {
                     'accrual', 'carryover' => 'success',
                     'usage'                => 'warning',
