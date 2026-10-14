@@ -4,6 +4,8 @@ Laravel 11 + Filament 3 — السنة المالية من **1 يوليو** إل
 
 ### التشغيل والاختبارات
 
+يتطلب **PHP 8.4+** (متوافق مع `composer.lock` / Symfony 8.1).
+
 ```bash
 composer install
 cp .env.example .env && php artisan key:generate

@@ -1,6 +1,12 @@
 <?php
 
+use App\Models\Organization;
+use App\Models\User;
+use Database\Seeders\EntitlementGradeSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 /*
@@ -16,7 +22,7 @@ uses(TestCase::class, RefreshDatabase::class)->in('Feature', 'Unit');
 |--------------------------------------------------------------------------
 */
 uses()->beforeEach(function () {
-    $this->seed(\Database\Seeders\EntitlementGradeSeeder::class);
+    $this->seed(EntitlementGradeSeeder::class);
 })->in('Feature');
 
 /*
@@ -31,48 +37,48 @@ uses()->beforeEach(function () {
  */
 function createHierarchy(): array
 {
-    $dir = \App\Models\Organization::create([
+    $dir = Organization::create([
         'parent_id' => null,
-        'type'      => 'directorate',
-        'name'      => 'مديرية الأقصر التعليمية',
-        'code'      => 'DIR-TEST',
-        'path'      => '/',
-        'depth'     => 0,
+        'type' => 'directorate',
+        'name' => 'مديرية الأقصر التعليمية',
+        'code' => 'DIR-TEST',
+        'path' => '/',
+        'depth' => 0,
         'is_active' => true,
     ]);
 
-    $adm = \App\Models\Organization::create([
+    $adm = Organization::create([
         'parent_id' => $dir->id,
-        'type'      => 'administration',
-        'name'      => 'إدارة أرمنت التعليمية',
-        'code'      => 'ADM-TEST',
-        'path'      => '/',
-        'depth'     => 0,
+        'type' => 'administration',
+        'name' => 'إدارة أرمنت التعليمية',
+        'code' => 'ADM-TEST',
+        'path' => '/',
+        'depth' => 0,
         'is_active' => true,
     ]);
 
-    $school = \App\Models\Organization::create([
+    $school = Organization::create([
         'parent_id' => $adm->id,
-        'type'      => 'school',
-        'name'      => 'مدرسة النيل الابتدائية',
-        'code'      => 'SCH-TEST',
-        'path'      => '/',
-        'depth'     => 0,
+        'type' => 'school',
+        'name' => 'مدرسة النيل الابتدائية',
+        'code' => 'SCH-TEST',
+        'path' => '/',
+        'depth' => 0,
         'is_active' => true,
     ]);
 
     // Refresh to get observer-built paths
     return [
-        'directorate'    => $dir->fresh(),
+        'directorate' => $dir->fresh(),
         'administration' => $adm->fresh(),
-        'school'         => $school->fresh(),
+        'school' => $school->fresh(),
     ];
 }
 
 /**
  * Grant school-employee API permissions (matches RoleAndPermissionSeeder school_employee).
  */
-function grantApiSchoolEmployeePermissions(\App\Models\User $user, \App\Models\Organization $school): void
+function grantApiSchoolEmployeePermissions(User $user, Organization $school): void
 {
     $permissions = [
         'create_leave_request',
@@ -88,19 +94,46 @@ function grantApiSchoolEmployeePermissions(\App\Models\User $user, \App\Models\O
     ];
 
     foreach ($permissions as $perm) {
-        \Spatie\Permission\Models\Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
     }
 
     setPermissionsTeamId($school->id);
 
-    $role = \Spatie\Permission\Models\Role::firstOrCreate([
-        'name'            => 'موظف مدرسة',
-        'guard_name'      => 'web',
+    $role = Role::firstOrCreate([
+        'name' => 'موظف مدرسة',
+        'guard_name' => 'web',
         'organization_id' => $school->id,
     ]);
 
     $role->syncPermissions($permissions);
     $user->assignRole($role);
 
-    app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+    app()[PermissionRegistrar::class]->forgetCachedPermissions();
+}
+
+/**
+ * Assign a single role with permissions on an organization (Spatie teams).
+ */
+function assignOrgRole(
+    User $user,
+    Organization $org,
+    string $roleName,
+    array $permissions
+): void {
+    foreach ($permissions as $perm) {
+        Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+    }
+
+    setPermissionsTeamId($org->id);
+
+    $role = Role::firstOrCreate([
+        'name' => $roleName,
+        'guard_name' => 'web',
+        'organization_id' => $org->id,
+    ]);
+
+    $role->syncPermissions($permissions);
+    $user->assignRole($role);
+
+    app()[PermissionRegistrar::class]->forgetCachedPermissions();
 }
