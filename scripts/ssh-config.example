@@ -1,0 +1,7 @@
+# انسخ إلى ~/.ssh/config وعدّل User
+Host leave-rtltec
+  HostName 68.65.122.95
+  Port 21098
+  User rtltdwgz
+  IdentityFile ~/.ssh/leave_rtltec
+  IdentitiesOnly yes

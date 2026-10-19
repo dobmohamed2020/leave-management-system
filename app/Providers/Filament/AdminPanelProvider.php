@@ -52,11 +52,15 @@ class AdminPanelProvider extends PanelProvider
             ->font('Tajawal', provider: GoogleFontProvider::class)
             ->navigationGroups([
                 // Icons belong on items, not groups (Filament forbids both).
+                // Resources must belong to a registered group or they won't appear in the sidebar.
                 NavigationGroup::make('المدارس'),
+                NavigationGroup::make('المؤسسات والمستخدمون'),
+                NavigationGroup::make('التقارير'),
                 NavigationGroup::make('المستخدمون'),
                 NavigationGroup::make('الموظفون'),
                 NavigationGroup::make('طلبات الإجازات'),
                 NavigationGroup::make('الإعدادات'),
+                NavigationGroup::make('النظام'),
             ])
             ->navigationItems([
                 NavigationItem::make('إضافة مدرسة')
