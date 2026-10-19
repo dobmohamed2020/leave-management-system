@@ -24,6 +24,25 @@ php artisan migrate --seed
 
 مسارات `/api/*` محمية بـ Sanctum مع سياسات الصلاحيات (Spatie teams = `organization_id`).
 
+### الأمان والإنتاج
+
+قائمة فحص قبل النشر على السيرفر:
+
+| المتغير / الإعداد | الإنتاج |
+|-------------------|---------|
+| `APP_ENV` | `production` |
+| `APP_DEBUG` | `false` |
+| `LOG_LEVEL` | `warning` أو `error` |
+| `SESSION_SECURE_COOKIE` | `true` |
+| `SESSION_SAME_SITE` | `lax` (أو `strict`) |
+| `SANCTUM_STATEFUL_DOMAINS` | نطاق الإنتاج فقط (مثلاً `leave.rtltec.com`) |
+| `SANCTUM_TOKEN_EXPIRATION_MINUTES` | مثلاً `480` |
+| جذر الويب | `public/` فقط — لا `.env` ولا `.git` |
+| Cron | `schedule:run` كل دقيقة |
+
+- التحقق العام من الإجازة: `/verify/{uuid}` (رابط QR غير قابل للتخمين؛ معتمد فقط).
+- رؤوس أمان: middleware `SecurityHeaders` + إعداد Cloudflare في [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md).
+
 ---
 
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>

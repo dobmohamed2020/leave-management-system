@@ -2,12 +2,12 @@
 
 namespace App\Services;
 
+use App\Enums\ApprovalRule;
 use App\Enums\LeaveStatus;
 use App\Enums\StepStatus;
 use App\Exceptions\LeaveRequestException;
 use App\Models\DeletionRequest;
 use App\Models\Employee;
-use App\Models\LeaveBalance;
 use App\Models\LeaveRequest;
 use App\Models\LeaveRequestStep;
 use App\Models\LeaveType;
@@ -20,14 +20,15 @@ use App\Rules\Leave\NoOverlapRule;
 use App\Rules\Leave\SufficientBalanceRule;
 use App\Rules\Leave\WorkingDaysRule;
 use App\Services\DTO\CreateLeaveRequestResult;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class LeaveRequestService
 {
     public function __construct(
         private readonly LeaveBalanceService $balanceService,
+        private readonly AuditLogService $auditLog,
     ) {}
 
     // -------------------------------------------------------------------------
@@ -39,8 +40,9 @@ class LeaveRequestService
      * Returns a DTO with the request + any non-blocking warnings.
      *
      * @param  array<string, mixed>  $data  Must contain: employee_id, leave_type_id,
-     *                                       start_date, end_date, days, (optional) reason,
-     *                                       written_at, substitute_employee_id
+     *                                      start_date, end_date, days, (optional) reason,
+     *                                      written_at, substitute_employee_id
+     *
      * @throws ValidationException
      */
     public function create(array $data, User $createdBy): CreateLeaveRequestResult
@@ -57,7 +59,7 @@ class LeaveRequestService
 
         $leaveType = LeaveType::findOrFail($data['leave_type_id']);
         $fiscalYear = app(FiscalYearService::class)->fiscalYearFor(
-            isset($data['start_date']) ? \Carbon\Carbon::parse($data['start_date']) : null
+            isset($data['start_date']) ? Carbon::parse($data['start_date']) : null
         );
         $deductFromCarried = (bool) ($data['deduct_from_carried'] ?? false);
 
@@ -74,7 +76,7 @@ class LeaveRequestService
             ]);
         }
 
-        $startDate = \Carbon\Carbon::parse($data['start_date'])->startOfDay();
+        $startDate = Carbon::parse($data['start_date'])->startOfDay();
         $allowPastDates = (bool) ($data['allow_past_dates'] ?? false);
         if (! $allowPastDates && $startDate->isPast() && ! $startDate->isToday()) {
             throw ValidationException::withMessages([
@@ -88,7 +90,7 @@ class LeaveRequestService
             ]);
         }
 
-        $endDate = \Carbon\Carbon::parse($data['end_date'])->startOfDay();
+        $endDate = Carbon::parse($data['end_date'])->startOfDay();
         if ($endDate->lt($startDate)) {
             throw ValidationException::withMessages([
                 'end_date' => 'تاريخ النهاية يجب أن يكون في نفس تاريخ البداية أو بعده.',
@@ -98,7 +100,7 @@ class LeaveRequestService
         $warnings = [];
 
         // ---- Working days calculation ----
-        $workingDaysRule = new WorkingDaysRule();
+        $workingDaysRule = new WorkingDaysRule;
         $workingDaysRule->setData($data);
         $workingDaysRule->validate('days', $data['days'] ?? 0, fn ($msg) => null);
 
@@ -107,7 +109,7 @@ class LeaveRequestService
         } elseif (empty($data['days']) || (int) $data['days'] <= 0) {
             throw ValidationException::withMessages([
                 'start_date' => 'لا توجد أيام عمل في الفترة المحددة (عطلة أسبوعية أو إجازة رسمية). اختر تواريخاً أخرى.',
-                'days'       => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
+                'days' => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
             ]);
         }
 
@@ -119,7 +121,7 @@ class LeaveRequestService
 
         // ---- Sufficient balance ----
         $balanceRule = new SufficientBalanceRule($employee, $leaveType, $fiscalYear, $deductFromCarried);
-        $balanceRule->validate('days', $data['days'], fn($msg) => throw ValidationException::withMessages(['days' => $msg]));
+        $balanceRule->validate('days', $data['days'], fn ($msg) => throw ValidationException::withMessages(['days' => $msg]));
         if ($balanceRule->warning) {
             $warnings[] = $balanceRule->warning;
         }
@@ -147,7 +149,7 @@ class LeaveRequestService
 
         // ---- Casual before regular ----
         $casualRule = new CasualBeforeRegularRule($employee, $leaveType, $fiscalYear);
-        $casualRule->validate('days', $data['days'], fn($msg) => null);
+        $casualRule->validate('days', $data['days'], fn ($msg) => null);
         if ($casualRule->warning) {
             $warnings[] = $casualRule->warning;
         }
@@ -179,28 +181,32 @@ class LeaveRequestService
         // ---- Persist ----
         $request = DB::transaction(function () use ($data, $createdBy, $employee, $deductFromCarried) {
             return LeaveRequest::create([
-                'employee_id'            => $employee->id,
-                'organization_id'        => $employee->organization_id,
-                'leave_type_id'          => $data['leave_type_id'],
-                'deduct_from_carried'    => $deductFromCarried,
+                'employee_id' => $employee->id,
+                'organization_id' => $employee->organization_id,
+                'leave_type_id' => $data['leave_type_id'],
+                'deduct_from_carried' => $deductFromCarried,
                 'substitute_employee_id' => $data['substitute_employee_id'] ?? null,
-                'start_date'             => $data['start_date'],
-                'end_date'               => $data['end_date'],
-                'days'                   => $data['days'],
-                'written_at'             => $data['written_at'] ?? null,
-                'reason'                 => isset($data['reason']) ? trim((string) $data['reason']) : null,
-                'status'                 => LeaveStatus::DRAFT,
-                'created_by'             => $createdBy->id,
+                'start_date' => $data['start_date'],
+                'end_date' => $data['end_date'],
+                'days' => $data['days'],
+                'written_at' => $data['written_at'] ?? null,
+                'reason' => isset($data['reason']) ? trim((string) $data['reason']) : null,
+                'status' => LeaveStatus::DRAFT,
+                'created_by' => $createdBy->id,
             ]);
         });
 
-        return new CreateLeaveRequestResult($request->fresh(), $warnings);
+        $fresh = $request->fresh();
+        $this->auditLeaveWorkflow($fresh, $createdBy, 'إنشاء مسودة طلب إجازة');
+
+        return new CreateLeaveRequestResult($fresh, $warnings);
     }
 
     /**
      * Validate and persist updates to a draft/returned leave request.
      *
      * @param  array<string, mixed>  $patch
+     *
      * @throws ValidationException
      */
     public function update(LeaveRequest $leaveRequest, array $patch, User $actedBy): LeaveRequest
@@ -214,17 +220,17 @@ class LeaveRequestService
         $patch = array_filter($patch, fn ($v) => $v !== null);
 
         $data = array_merge([
-            'employee_id'            => $leaveRequest->employee_id,
-            'leave_type_id'          => $leaveRequest->leave_type_id,
-            'start_date'             => $leaveRequest->start_date->toDateString(),
-            'end_date'               => $leaveRequest->end_date->toDateString(),
-            'days'                     => $leaveRequest->days,
-            'reason'                   => $leaveRequest->reason,
-            'substitute_employee_id'   => $leaveRequest->substitute_employee_id,
-            'deduct_from_carried'      => $leaveRequest->deduct_from_carried,
-            'written_at'               => $leaveRequest->written_at?->toDateString(),
-            'allow_past_dates'         => true,
-            'exclude_request_id'       => $leaveRequest->id,
+            'employee_id' => $leaveRequest->employee_id,
+            'leave_type_id' => $leaveRequest->leave_type_id,
+            'start_date' => $leaveRequest->start_date->toDateString(),
+            'end_date' => $leaveRequest->end_date->toDateString(),
+            'days' => $leaveRequest->days,
+            'reason' => $leaveRequest->reason,
+            'substitute_employee_id' => $leaveRequest->substitute_employee_id,
+            'deduct_from_carried' => $leaveRequest->deduct_from_carried,
+            'written_at' => $leaveRequest->written_at?->toDateString(),
+            'allow_past_dates' => true,
+            'exclude_request_id' => $leaveRequest->id,
         ], $patch);
 
         $employee = Employee::withoutGlobalScopes()
@@ -239,7 +245,7 @@ class LeaveRequestService
 
         $leaveType = LeaveType::findOrFail($data['leave_type_id']);
         $fiscalYear = app(FiscalYearService::class)->fiscalYearFor(
-            isset($data['start_date']) ? \Carbon\Carbon::parse($data['start_date']) : null
+            isset($data['start_date']) ? Carbon::parse($data['start_date']) : null
         );
         $deductFromCarried = (bool) ($data['deduct_from_carried'] ?? false);
 
@@ -249,7 +255,7 @@ class LeaveRequestService
             ]);
         }
 
-        $startDate = \Carbon\Carbon::parse($data['start_date'])->startOfDay();
+        $startDate = Carbon::parse($data['start_date'])->startOfDay();
         $allowPastDates = (bool) ($data['allow_past_dates'] ?? false);
         if (! $allowPastDates && $startDate->isPast() && ! $startDate->isToday()) {
             throw ValidationException::withMessages([
@@ -257,14 +263,14 @@ class LeaveRequestService
             ]);
         }
 
-        $endDate = \Carbon\Carbon::parse($data['end_date'])->startOfDay();
+        $endDate = Carbon::parse($data['end_date'])->startOfDay();
         if ($endDate->lt($startDate)) {
             throw ValidationException::withMessages([
                 'end_date' => 'تاريخ النهاية يجب أن يكون في نفس تاريخ البداية أو بعده.',
             ]);
         }
 
-        $workingDaysRule = new WorkingDaysRule();
+        $workingDaysRule = new WorkingDaysRule;
         $workingDaysRule->setData($data);
         $workingDaysRule->validate('days', $data['days'] ?? 0, fn ($msg) => null);
 
@@ -273,7 +279,7 @@ class LeaveRequestService
         } elseif (empty($data['days']) || (int) $data['days'] <= 0) {
             throw ValidationException::withMessages([
                 'start_date' => 'لا توجد أيام عمل في الفترة المحددة (عطلة أسبوعية أو إجازة رسمية). اختر تواريخاً أخرى.',
-                'days'       => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
+                'days' => 'عدد أيام الإجازة لا يمكن أن يقل عن يوم واحد.',
             ]);
         }
 
@@ -311,19 +317,22 @@ class LeaveRequestService
         $data['reason'] = ($reason !== '') ? $reason : null;
 
         $leaveRequest->update([
-            'employee_id'            => $employee->id,
-            'organization_id'        => $employee->organization_id,
-            'leave_type_id'          => $data['leave_type_id'],
-            'deduct_from_carried'    => $deductFromCarried,
+            'employee_id' => $employee->id,
+            'organization_id' => $employee->organization_id,
+            'leave_type_id' => $data['leave_type_id'],
+            'deduct_from_carried' => $deductFromCarried,
             'substitute_employee_id' => $data['substitute_employee_id'] ?? null,
-            'start_date'             => $data['start_date'],
-            'end_date'               => $data['end_date'],
-            'days'                   => $data['days'],
-            'written_at'             => $data['written_at'] ?? null,
-            'reason'                 => $data['reason'],
+            'start_date' => $data['start_date'],
+            'end_date' => $data['end_date'],
+            'days' => $data['days'],
+            'written_at' => $data['written_at'] ?? null,
+            'reason' => $data['reason'],
         ]);
 
-        return $leaveRequest->fresh();
+        $fresh = $leaveRequest->fresh();
+        $this->auditLeaveWorkflow($fresh, $actedBy, 'تعديل طلب إجازة');
+
+        return $fresh;
     }
 
     // -------------------------------------------------------------------------
@@ -341,7 +350,7 @@ class LeaveRequestService
             throw LeaveRequestException::invalidTransition($request->status, LeaveStatus::SUBMITTED);
         }
 
-        return DB::transaction(function () use ($request, $submittedBy) {
+        $result = DB::transaction(function () use ($request, $submittedBy) {
             // Delete any stale steps from a previous submission
             $request->steps()->delete();
 
@@ -356,14 +365,14 @@ class LeaveRequestService
             // Snapshot current balance
             $leaveType = $request->leaveType;
             $fiscalYear = app(FiscalYearService::class)->fiscalYearFor($request->start_date);
-            $balance   = $this->balanceService->getOrCreateBalance(
+            $balance = $this->balanceService->getOrCreateBalance(
                 $employee,
                 $leaveType,
                 $fiscalYear
             );
 
-            $request->balance_entitled  = $balance->entitled;
-            $request->balance_used      = $balance->used;
+            $request->balance_entitled = $balance->entitled;
+            $request->balance_used = $balance->used;
             $request->balance_remaining = $balance->remaining;
 
             // Build workflow steps from configuration
@@ -380,14 +389,14 @@ class LeaveRequestService
             foreach ($stages as $stage) {
                 LeaveRequestStep::create([
                     'leave_request_id' => $request->id,
-                    'step_order'       => $stage->step_order,
-                    'stage'            => $stage->stage_name,
-                    'status'           => StepStatus::PENDING,
+                    'step_order' => $stage->step_order,
+                    'stage' => $stage->stage_name,
+                    'status' => StepStatus::PENDING,
                 ]);
             }
 
             $firstStage = $stages->first();
-            $request->status        = LeaveStatus::SUBMITTED;
+            $request->status = LeaveStatus::SUBMITTED;
             $request->current_stage = $firstStage->stage_name;
             $request->save();
 
@@ -414,6 +423,10 @@ class LeaveRequestService
 
             return $request;
         });
+
+        $this->auditLeaveWorkflow($result->fresh(), $submittedBy, 'تقديم طلب إجازة للاعتماد');
+
+        return $result;
     }
 
     /**
@@ -463,13 +476,13 @@ class LeaveRequestService
     ): LeaveRequest {
         $this->guardStepAction($request, $step, $actedBy);
 
-        return DB::transaction(function () use ($request, $step, $actedBy, $note) {
+        $fresh = DB::transaction(function () use ($request, $step, $actedBy, $note) {
             // Mark this step approved
             $step->update([
-                'status'   => StepStatus::APPROVED,
+                'status' => StepStatus::APPROVED,
                 'acted_by' => $actedBy->id,
                 'acted_at' => now(),
-                'note'     => $note,
+                'note' => $note,
             ]);
 
             // Count approvals in this stage
@@ -478,7 +491,7 @@ class LeaveRequestService
                 ->get();
 
             $approvedCount = $stepsInStage->where('status', StepStatus::APPROVED)->count();
-            $totalCount    = $stepsInStage->count();
+            $totalCount = $stepsInStage->count();
 
             // Get the approval rule for this stage
             $wfConfig = WorkflowConfiguration::where('organization_id', $request->organization_id)
@@ -486,7 +499,7 @@ class LeaveRequestService
                 ->where('is_active', true)
                 ->first();
 
-            $approvalRule = $wfConfig?->approval_rule ?? \App\Enums\ApprovalRule::ANY;
+            $approvalRule = $wfConfig?->approval_rule ?? ApprovalRule::ANY;
 
             if (! $approvalRule->isStageApproved($approvedCount, $totalCount)) {
                 // Not enough approvals yet — just save and wait
@@ -510,22 +523,22 @@ class LeaveRequestService
                 // Advance to next stage
                 LeaveRequestStep::firstOrCreate([
                     'leave_request_id' => $request->id,
-                    'step_order'       => $nextStage->step_order,
+                    'step_order' => $nextStage->step_order,
                 ], [
-                    'stage'  => $nextStage->stage_name,
+                    'stage' => $nextStage->stage_name,
                     'status' => StepStatus::PENDING,
                 ]);
 
-                $request->status        = LeaveStatus::IN_REVIEW;
+                $request->status = LeaveStatus::IN_REVIEW;
                 $request->current_stage = $nextStage->stage_name;
                 $request->save();
 
                 $this->notifyNextStage($request, $nextStage->stage_name);
             } else {
                 // Final approval
-                $request->status        = LeaveStatus::APPROVED;
+                $request->status = LeaveStatus::APPROVED;
                 $request->current_stage = null;
-                $request->decided_by    = $actedBy->id;
+                $request->decided_by = $actedBy->id;
                 $request->save();
 
                 // Deduct balance only if leave type requires it
@@ -539,7 +552,7 @@ class LeaveRequestService
                     $this->balanceService->deduct($balance, (int) $request->days, $request, $actedBy);
 
                     $balance->refresh();
-                    $request->balance_used      = $balance->total_used;
+                    $request->balance_used = $balance->total_used;
                     $request->balance_remaining = $request->deduct_from_carried ? $balance->remaining_carried : $balance->remaining_entitled;
                     $request->save();
                 }
@@ -549,6 +562,13 @@ class LeaveRequestService
 
             return $request->fresh();
         });
+
+        $this->auditLeaveWorkflow($fresh, $actedBy, "اعتماد مرحلة {$step->stage}", [
+            'stage' => $step->stage,
+            'note' => $note,
+        ]);
+
+        return $fresh;
     }
 
     // -------------------------------------------------------------------------
@@ -572,12 +592,12 @@ class LeaveRequestService
 
         $this->guardStepAction($request, $step, $actedBy);
 
-        return DB::transaction(function () use ($request, $step, $actedBy, $reason) {
+        $fresh = DB::transaction(function () use ($request, $step, $actedBy, $reason) {
             $step->update([
-                'status'   => StepStatus::REJECTED,
+                'status' => StepStatus::REJECTED,
                 'acted_by' => $actedBy->id,
                 'acted_at' => now(),
-                'note'     => $reason,
+                'note' => $reason,
             ]);
 
             // Skip all remaining pending steps
@@ -585,16 +605,23 @@ class LeaveRequestService
                 ->where('status', StepStatus::PENDING)
                 ->update(['status' => StepStatus::SKIPPED->value, 'acted_at' => now()]);
 
-            $request->status           = LeaveStatus::REJECTED;
+            $request->status = LeaveStatus::REJECTED;
             $request->rejection_reason = $reason;
-            $request->current_stage    = null;
-            $request->decided_by       = $actedBy->id;
+            $request->current_stage = null;
+            $request->decided_by = $actedBy->id;
             $request->save();
 
             $this->notifyRejected($request, $reason);
 
             return $request->fresh();
         });
+
+        $this->auditLeaveWorkflow($fresh, $actedBy, 'رفض طلب إجازة', [
+            'stage' => $step->stage,
+            'reason' => $reason,
+        ]);
+
+        return $fresh;
     }
 
     // -------------------------------------------------------------------------
@@ -620,19 +647,19 @@ class LeaveRequestService
             throw new LeaveRequestException('ملاحظة الإعادة للتعديل مطلوبة ولا يمكن أن تكون فارغة.');
         }
 
-        return DB::transaction(function () use ($request, $step, $actedBy, $note) {
+        $fresh = DB::transaction(function () use ($request, $step, $actedBy, $note) {
             $step->update([
-                'status'   => StepStatus::RETURNED,
+                'status' => StepStatus::RETURNED,
                 'acted_by' => $actedBy->id,
                 'acted_at' => now(),
-                'note'     => $note,
+                'note' => $note,
             ]);
 
             LeaveRequestStep::where('leave_request_id', $request->id)
                 ->where('status', StepStatus::PENDING)
                 ->update(['status' => StepStatus::SKIPPED->value, 'acted_at' => now()]);
 
-            $request->status        = LeaveStatus::RETURNED;
+            $request->status = LeaveStatus::RETURNED;
             $request->current_stage = null;
             $request->save();
 
@@ -640,6 +667,13 @@ class LeaveRequestService
 
             return $request->fresh();
         });
+
+        $this->auditLeaveWorkflow($fresh, $actedBy, 'إعادة طلب إجازة للتعديل', [
+            'stage' => $step->stage,
+            'note' => $note,
+        ]);
+
+        return $fresh;
     }
 
     // -------------------------------------------------------------------------
@@ -657,14 +691,14 @@ class LeaveRequestService
             throw LeaveRequestException::invalidTransition($request->status, LeaveStatus::CANCELLED);
         }
 
-        return DB::transaction(function () use ($request, $cancelledBy) {
+        $fresh = DB::transaction(function () use ($request, $cancelledBy) {
             $wasApproved = $request->status === LeaveStatus::APPROVED;
 
             LeaveRequestStep::where('leave_request_id', $request->id)
                 ->where('status', StepStatus::PENDING)
                 ->update(['status' => StepStatus::SKIPPED->value, 'acted_at' => now()]);
 
-            $request->status        = LeaveStatus::CANCELLED;
+            $request->status = LeaveStatus::CANCELLED;
             $request->current_stage = null;
             $request->save();
 
@@ -677,13 +711,17 @@ class LeaveRequestService
                 $this->balanceService->refund($balance, (int) $request->days, $request, $cancelledBy);
 
                 $balance->refresh();
-                $request->balance_used      = $balance->used;
+                $request->balance_used = $balance->used;
                 $request->balance_remaining = $balance->remaining;
                 $request->save();
             }
 
             return $request->fresh();
         });
+
+        $this->auditLeaveWorkflow($fresh, $cancelledBy, 'إلغاء طلب إجازة');
+
+        return $fresh;
     }
 
     // -------------------------------------------------------------------------
@@ -695,12 +733,12 @@ class LeaveRequestService
      */
     public function restore(LeaveRequest $request, User $restoredBy): LeaveRequest
     {
-        return DB::transaction(function () use ($request, $restoredBy) {
+        $fresh = DB::transaction(function () use ($request) {
             $request->restore();
 
             if ($request->status === LeaveStatus::CANCELLED) {
                 $request->forceFill([
-                    'status'        => LeaveStatus::DRAFT,
+                    'status' => LeaveStatus::DRAFT,
                     'current_stage' => null,
                 ])->save();
             }
@@ -710,12 +748,32 @@ class LeaveRequestService
                 ->where('model_id', $request->id)
                 ->where('status', 'approved')
                 ->update([
-                    'status'      => 'restored',
+                    'status' => 'restored',
                     'admin_notes' => 'تمت استعادة طلب الإجازة من الحذف العادي',
                 ]);
 
             return $request->fresh();
         });
+
+        $this->auditLeaveWorkflow($fresh, $restoredBy, 'استعادة طلب إجازة محذوف');
+
+        return $fresh;
+    }
+
+    private function auditLeaveWorkflow(LeaveRequest $request, User $actedBy, string $description, array $extra = []): void
+    {
+        $this->auditLog->recordWorkflow(
+            $description,
+            $request,
+            array_merge([
+                'leave_request_id' => $request->id,
+                'number' => $request->number,
+                'status' => $request->status->value,
+                'current_stage' => $request->current_stage,
+                'organization_id' => $request->organization_id,
+            ], $extra),
+            $actedBy,
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -745,8 +803,8 @@ class LeaveRequestService
         // التحقق من أن المستخدم يملك الدور المطلوب لهذه المرحلة
         $stageRoleMap = [
             'leaves_officer' => 'مسؤول الإجازات',
-            'hr_affairs'     => 'شؤون عاملين',
-            'admin_manager'  => 'مدير الإدارة',
+            'hr_affairs' => 'شؤون عاملين',
+            'admin_manager' => 'مدير الإدارة',
         ];
 
         if (isset($stageRoleMap[$step->stage])) {
@@ -791,7 +849,8 @@ class LeaveRequestService
                     "طلب إجازة في انتظار رأيكم — رقم {$request->number}"
                 ));
             }
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
     }
 
     private function notifyApproved(LeaveRequest $request): void
@@ -802,7 +861,8 @@ class LeaveRequestService
                 'approved',
                 "تمت الموافقة على طلب الإجازة رقم {$request->number}"
             ));
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
     }
 
     private function notifyRejected(LeaveRequest $request, string $reason): void
@@ -813,7 +873,8 @@ class LeaveRequestService
                 'rejected',
                 "تم رفض طلب الإجازة رقم {$request->number}. السبب: {$reason}"
             ));
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
     }
 
     private function notifyReturned(LeaveRequest $request, string $note): void
@@ -824,7 +885,8 @@ class LeaveRequestService
                 'returned',
                 "أُعيد طلب الإجازة رقم {$request->number} للتعديل. ملاحظة: {$note}"
             ));
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
     }
 
     /**
@@ -848,10 +910,10 @@ class LeaveRequestService
 
         setPermissionsTeamId($request->organization_id);
 
-        $users = \App\Models\User::where('organization_id', $request->organization_id)
+        $users = User::where('organization_id', $request->organization_id)
             ->where('is_active', true)
             ->get()
-            ->filter(fn($u) => $u->hasRole($wfConfig->required_role));
+            ->filter(fn ($u) => $u->hasRole($wfConfig->required_role));
 
         setPermissionsTeamId(null);
 

@@ -15,16 +15,21 @@ use App\Policies\EmployeePolicy;
 use App\Policies\LeaveRequestPolicy;
 use App\Policies\OrganizationPolicy;
 use App\Policies\UserPolicy;
+use App\Services\AuditLogService;
+use App\Services\DashboardStatsService;
 use App\Services\LeaveBalanceService;
 use App\Services\LeaveRequestService;
 use App\Services\ReportPdfService;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\DateTimePicker;
+use Illuminate\Auth\Events\Logout;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -35,8 +40,8 @@ class AppServiceProvider extends ServiceProvider
      */
     protected array $policies = [
         Organization::class => OrganizationPolicy::class,
-        User::class         => UserPolicy::class,
-        Employee::class     => EmployeePolicy::class,
+        User::class => UserPolicy::class,
+        Employee::class => EmployeePolicy::class,
         LeaveRequest::class => LeaveRequestPolicy::class,
     ];
 
@@ -45,9 +50,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->singleton(AuditLogService::class);
         $this->app->singleton(LeaveBalanceService::class);
         $this->app->singleton(LeaveRequestService::class);
-        $this->app->singleton(\App\Services\DashboardStatsService::class);
+        $this->app->singleton(DashboardStatsService::class);
         $this->app->singleton(ReportPdfService::class);
     }
 
@@ -62,7 +68,7 @@ class AppServiceProvider extends ServiceProvider
         Schema::defaultStringLength(191);
 
         // ---------------------------------------------------------------
-        $this->app->resolving(\Illuminate\Http\JsonResponse::class, function (\Illuminate\Http\JsonResponse $response) {
+        $this->app->resolving(JsonResponse::class, function (JsonResponse $response) {
             $response->setEncodingOptions(JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
         });
 
@@ -103,5 +109,15 @@ class AppServiceProvider extends ServiceProvider
         foreach ($this->policies as $model => $policy) {
             Gate::policy($model, $policy);
         }
+
+        Event::listen(Logout::class, function (Logout $event): void {
+            $user = $event->user;
+
+            if ($user instanceof User) {
+                app(AuditLogService::class)->recordAuth('تسجيل خروج من النظام', [
+                    'ip' => request()?->ip(),
+                ], $user);
+            }
+        });
     }
 }

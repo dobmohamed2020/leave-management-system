@@ -6,6 +6,7 @@ use App\Enums\LeaveStatus;
 use App\Models\LeaveRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * Handles leave request lifecycle events beyond what LogsActivity covers:
@@ -23,6 +24,10 @@ class LeaveRequestObserver
     {
         if (empty($request->number)) {
             $request->number = $this->generateNumber();
+        }
+
+        if (empty($request->verification_token)) {
+            $request->verification_token = (string) Str::uuid();
         }
     }
 
@@ -62,8 +67,8 @@ class LeaveRequestObserver
         $new = $request->status->label();
 
         Log::info("[LeaveRequest] #{$request->number} | {$old} → {$new}", [
-            'id'         => $request->id,
-            'employee'   => $request->employee_id,
+            'id' => $request->id,
+            'employee' => $request->employee_id,
             'decided_by' => $request->decided_by,
         ]);
     }
@@ -81,8 +86,8 @@ class LeaveRequestObserver
         return DB::transaction(function () use ($year) {
             $castExpr = match (DB::getDriverName()) {
                 'mysql', 'mariadb' => 'CAST(RIGHT(`number`, 6) AS UNSIGNED)',
-                'pgsql'            => 'CAST(RIGHT(number, 6) AS INTEGER)',
-                default            => 'CAST(SUBSTR(number, -6) AS INTEGER)',
+                'pgsql' => 'CAST(RIGHT(number, 6) AS INTEGER)',
+                default => 'CAST(SUBSTR(number, -6) AS INTEGER)',
             };
 
             $last = LeaveRequest::withoutGlobalScopes()

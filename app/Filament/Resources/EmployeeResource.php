@@ -2,26 +2,40 @@
 
 namespace App\Filament\Resources;
 
-use App\Enums\LeaveStatus;
+use App\Enums\ApprovalRole;
 use App\Enums\OrganizationType;
 use App\Filament\Resources\EmployeeResource\Pages;
+use App\Models\DeletionRequest;
 use App\Models\Employee;
 use App\Models\EntitlementGrade;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\CascadeDeletionService;
+use App\Services\EmployeeReportService;
+use App\Services\FiscalYearService;
+use App\Services\LeaveBalanceService;
+use App\Support\SystemAudit;
+use Database\Seeders\RoleAndPermissionSeeder;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
 use Filament\Infolists;
+use Filament\Infolists\Components\TextEntry\TextEntrySize;
 use Filament\Infolists\Infolist;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Support\Enums\FontFamily;
+use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rules\Unique;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * مورد إدارة بيانات الموظفين مع عرض رصيد الإجازات.
@@ -31,9 +45,13 @@ class EmployeeResource extends Resource
     protected static ?string $model = Employee::class;
 
     protected static ?string $navigationGroup = 'الموظفون';
+
     protected static ?string $navigationLabel = 'الموظفون';
-    protected static ?string $navigationIcon  = 'heroicon-o-identification';
-    protected static ?string $modelLabel      = 'موظف';
+
+    protected static ?string $navigationIcon = 'heroicon-o-identification';
+
+    protected static ?string $modelLabel = 'موظف';
+
     protected static ?string $pluralModelLabel = 'الموظفون';
 
     public static function canViewAny(): bool
@@ -100,19 +118,23 @@ class EmployeeResource extends Resource
                 ->label('دور الاعتماد')
                 ->options(function (callable $get): array {
                     $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
-                    if (! $orgId) return [];
+                    if (! $orgId) {
+                        return [];
+                    }
 
-                    $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
-                    if (! $org) return [];
+                    $org = Organization::withoutGlobalScopes()->find($orgId);
+                    if (! $org) {
+                        return [];
+                    }
 
-                    return match(true) {
-                        $org->type === \App\Enums\OrganizationType::SCHOOL => [
-                            \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL->value => \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL->label(),
+                    return match (true) {
+                        $org->type === OrganizationType::SCHOOL => [
+                            ApprovalRole::SCHOOL_PRINCIPAL->value => ApprovalRole::SCHOOL_PRINCIPAL->label(),
                         ],
-                        $org->type === \App\Enums\OrganizationType::ADMINISTRATION => [
-                            \App\Enums\ApprovalRole::LEAVES_OFFICER->value => \App\Enums\ApprovalRole::LEAVES_OFFICER->label(),
-                            \App\Enums\ApprovalRole::HR_AFFAIRS->value     => \App\Enums\ApprovalRole::HR_AFFAIRS->label(),
-                            \App\Enums\ApprovalRole::ADMIN_MANAGER->value  => \App\Enums\ApprovalRole::ADMIN_MANAGER->label(),
+                        $org->type === OrganizationType::ADMINISTRATION => [
+                            ApprovalRole::LEAVES_OFFICER->value => ApprovalRole::LEAVES_OFFICER->label(),
+                            ApprovalRole::HR_AFFAIRS->value => ApprovalRole::HR_AFFAIRS->label(),
+                            ApprovalRole::ADMIN_MANAGER->value => ApprovalRole::ADMIN_MANAGER->label(),
                         ],
                         default => [],
                     };
@@ -120,11 +142,14 @@ class EmployeeResource extends Resource
                 ->live()
                 ->hidden(function (callable $get): bool {
                     $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
-                    if (! $orgId) return true;
-                    $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
+                    if (! $orgId) {
+                        return true;
+                    }
+                    $org = Organization::withoutGlobalScopes()->find($orgId);
+
                     return ! $org || ! in_array($org->type, [
-                        \App\Enums\OrganizationType::SCHOOL,
-                        \App\Enums\OrganizationType::ADMINISTRATION,
+                        OrganizationType::SCHOOL,
+                        OrganizationType::ADMINISTRATION,
                     ]);
                 })
                 ->nullable()
@@ -205,7 +230,7 @@ class EmployeeResource extends Resource
                 ->description(function (Get $get): string {
                     $approvalRole = $get('approval_role');
                     if ($approvalRole) {
-                        $roleEnum = \App\Enums\ApprovalRole::tryFrom($approvalRole);
+                        $roleEnum = ApprovalRole::tryFrom($approvalRole);
                         if ($roleEnum) {
                             return "فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور الذي سيُمنح للحساب: {$roleEnum->label()}.";
                         }
@@ -213,7 +238,7 @@ class EmployeeResource extends Resource
 
                     $orgId = $get('organization_id') ?: auth()->user()?->organization_id;
                     if ($orgId) {
-                        $org = \App\Models\Organization::withoutGlobalScopes()->find($orgId);
+                        $org = Organization::withoutGlobalScopes()->find($orgId);
                         if ($org?->isAdministration()) {
                             return 'فعّل الخيار إذا كان الموظف يحتاج الدخول للنظام. الدور: موظف إدارة.';
                         }
@@ -326,12 +351,12 @@ class EmployeeResource extends Resource
         $phone = User::normalizePhone($phone ?: $employee->phone);
 
         $user = User::create([
-            'name'                 => $employee->full_name,
-            'email'                => $email,
-            'phone'                => $phone,
-            'password'             => $password,
-            'organization_id'      => $organizationId,
-            'is_active'            => true,
+            'name' => $employee->full_name,
+            'email' => $email,
+            'phone' => $phone,
+            'password' => $password,
+            'organization_id' => $organizationId,
+            'is_active' => true,
             'must_change_password' => false,
         ]);
 
@@ -339,28 +364,28 @@ class EmployeeResource extends Resource
 
         $org = $employee->organization ?? Organization::withoutGlobalScopes()->find($organizationId);
         $isAdministration = $org?->isAdministration();
-        $isDirectorate    = $org?->isDirectorate();
+        $isDirectorate = $org?->isDirectorate();
 
-        $spatieRoleName = match($employee->approval_role) {
-            \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL => 'مدير مدرسة',
-            \App\Enums\ApprovalRole::LEAVES_OFFICER   => 'مسؤول الإجازات',
-            \App\Enums\ApprovalRole::HR_AFFAIRS       => 'شؤون عاملين',
-            \App\Enums\ApprovalRole::ADMIN_MANAGER    => 'مدير الإدارة',
-            default                                   => match(true) {
+        $spatieRoleName = match ($employee->approval_role) {
+            ApprovalRole::SCHOOL_PRINCIPAL => 'مدير مدرسة',
+            ApprovalRole::LEAVES_OFFICER => 'مسؤول الإجازات',
+            ApprovalRole::HR_AFFAIRS => 'شؤون عاملين',
+            ApprovalRole::ADMIN_MANAGER => 'مدير الإدارة',
+            default => match (true) {
                 $isAdministration => 'كاتب الإدارة',
-                $isDirectorate    => 'منسق المديرية',
-                default           => 'موظف مدرسة',
+                $isDirectorate => 'منسق المديرية',
+                default => 'موظف مدرسة',
             },
         };
 
-        $role = \Spatie\Permission\Models\Role::query()
+        $role = Role::query()
             ->where('name', $spatieRoleName)
             ->where('organization_id', $organizationId)
             ->first();
 
         if (! $role && $org) {
-            \Database\Seeders\RoleAndPermissionSeeder::seedForOrganization($org);
-            $role = \Spatie\Permission\Models\Role::query()
+            RoleAndPermissionSeeder::seedForOrganization($org);
+            $role = Role::query()
                 ->where('name', $spatieRoleName)
                 ->where('organization_id', $organizationId)
                 ->first();
@@ -370,7 +395,7 @@ class EmployeeResource extends Resource
             $user->assignRole($role);
         }
 
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        app()[PermissionRegistrar::class]->forgetCachedPermissions();
         setPermissionsTeamId(null);
 
         $employee->update(['user_id' => $user->id]);
@@ -406,6 +431,7 @@ class EmployeeResource extends Resource
             if ($org->id === $user->organization_id && $org->isAdministration()) {
                 $label .= ' (الإدارة)';
             }
+
             return [$org->id => $label];
         })->toArray();
     }
@@ -454,13 +480,13 @@ class EmployeeResource extends Resource
 
                 Tables\Columns\TextColumn::make('approval_role')
                     ->label('دور الاعتماد')
-                    ->formatStateUsing(fn($state) => $state?->label() ?? '—')
+                    ->formatStateUsing(fn ($state) => $state?->label() ?? '—')
                     ->badge()
-                    ->color(fn($state) => match($state) {
-                        \App\Enums\ApprovalRole::SCHOOL_PRINCIPAL => 'success',
-                        \App\Enums\ApprovalRole::ADMIN_MANAGER    => 'danger',
-                        \App\Enums\ApprovalRole::LEAVES_OFFICER   => 'warning',
-                        \App\Enums\ApprovalRole::HR_AFFAIRS       => 'info',
+                    ->color(fn ($state) => match ($state) {
+                        ApprovalRole::SCHOOL_PRINCIPAL => 'success',
+                        ApprovalRole::ADMIN_MANAGER => 'danger',
+                        ApprovalRole::LEAVES_OFFICER => 'warning',
+                        ApprovalRole::HR_AFFAIRS => 'info',
                         default => 'gray',
                     })
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -592,21 +618,21 @@ class EmployeeResource extends Resource
                             ->placeholder('اكتب سبب طلب حذف الموظف بالتفصيل لإرساله إلى مدير الإدارة للاعتماد...'),
                     ])
                     ->action(function (Employee $record, array $data): void {
-                        \App\Models\DeletionRequest::create([
+                        DeletionRequest::create([
                             'organization_id' => auth()->user()->organization_id,
-                            'model_type'      => 'employee',
-                            'model_id'        => $record->id,
-                            'title'           => "طلب حذف الموظف: {$record->full_name} (كود: {$record->employee_code})",
-                            'details'         => [
+                            'model_type' => 'employee',
+                            'model_id' => $record->id,
+                            'title' => "طلب حذف الموظف: {$record->full_name} (كود: {$record->employee_code})",
+                            'details' => [
                                 'employee_code' => $record->employee_code,
-                                'full_name'     => $record->full_name,
-                                'job_title'     => $record->job_title,
-                                'grade'         => $record->entitlementGrade?->name,
-                                'phone'         => $record->phone,
+                                'full_name' => $record->full_name,
+                                'job_title' => $record->job_title,
+                                'grade' => $record->entitlementGrade?->name,
+                                'phone' => $record->phone,
                             ],
-                            'reason'          => $data['reason'],
-                            'requested_by'    => auth()->id(),
-                            'status'          => 'pending',
+                            'reason' => $data['reason'],
+                            'requested_by' => auth()->id(),
+                            'status' => 'pending',
                         ]);
 
                         Notification::make()
@@ -625,13 +651,12 @@ class EmployeeResource extends Resource
                     ->modalDescription('تحذير شديد الخطورة: سيتم حذف الموظف نهائياً وحذف كافة طلبات إجازاته ومرفقاتها وسجل حركات الأرصدة وحساب الدخول نهائياً من قاعدة البيانات بلا رجعة. هل أنت متأكد تماماً؟')
                     ->modalSubmitActionLabel('نعم، احذف نهائياً بلا رجعة')
                     ->modalCancelActionLabel('إلغاء')
-                    ->visible(fn (): bool =>
-                        (bool) (auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
+                    ->visible(fn (): bool => (bool) (auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || auth()->user()?->hasPermissionTo('manage_organization'))
                     )
                     ->action(function (Employee $record): void {
                         $name = $record->full_name;
-                        app(\App\Services\CascadeDeletionService::class)->deleteEmployeePermanently($record, auth()->user());
+                        app(CascadeDeletionService::class)->deleteEmployeePermanently($record, auth()->user());
                         Notification::make()
                             ->success()
                             ->title("تم حذف الموظف [{$name}] نهائياً مع كافة إجازاته وأرصدته ومتعلقاته")
@@ -649,8 +674,7 @@ class EmployeeResource extends Resource
                     ->modalDescription('سيتم استعادة الموظف وإعادته إلى قائمة الموظفين النشطين في النظام.')
                     ->modalSubmitActionLabel('نعم، استعادة الموظف')
                     ->modalCancelActionLabel('إلغاء')
-                    ->visible(fn (Employee $record): bool =>
-                        $record->trashed() &&
+                    ->visible(fn (Employee $record): bool => $record->trashed() &&
                         ! static::isSchoolActor() &&
                         (bool) (
                             auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
@@ -661,11 +685,11 @@ class EmployeeResource extends Resource
                     ->after(function (Employee $record): void {
                         $record->update(['is_active' => true]);
 
-                        \App\Models\DeletionRequest::where('model_type', 'employee')
+                        DeletionRequest::where('model_type', 'employee')
                             ->where('model_id', $record->id)
                             ->where('status', 'approved')
                             ->update([
-                                'status'      => 'restored',
+                                'status' => 'restored',
                                 'admin_notes' => 'تمت استعادة الموظف من الحذف العادي',
                             ]);
 
@@ -683,9 +707,9 @@ class EmployeeResource extends Resource
                     ->requiresConfirmation()
                     ->modalHeading('تجديد الأرصدة السنوية')
                     ->modalDescription('سيتم تجديد أرصدة الإجازات للموظفين المحددين للسنة الحالية. هل أنت متأكد؟')
-                    ->action(function (\Illuminate\Database\Eloquent\Collection $records): void {
-                        $service = app(\App\Services\LeaveBalanceService::class);
-                        $year = app(\App\Services\FiscalYearService::class)->currentFiscalYear();
+                    ->action(function (Collection $records): void {
+                        $service = app(LeaveBalanceService::class);
+                        $year = app(FiscalYearService::class)->currentFiscalYear();
                         $count = 0;
                         foreach ($records as $employee) {
                             try {
@@ -695,7 +719,7 @@ class EmployeeResource extends Resource
                                 });
                                 $count++;
                             } catch (\Throwable $e) {
-                                \Illuminate\Support\Facades\Log::warning('Balance renewal failed', [
+                                Log::warning('Balance renewal failed', [
                                     'employee_id' => $employee->id,
                                     'error' => $e->getMessage(),
                                 ]);
@@ -714,22 +738,21 @@ class EmployeeResource extends Resource
                     ->modalDescription('سيتم استعادة الموظفين المحددين وإعادتهم كنشطين.')
                     ->modalSubmitActionLabel('نعم، استعادة')
                     ->modalCancelActionLabel('إلغاء')
-                    ->visible(fn (): bool =>
-                        ! static::isSchoolActor() &&
+                    ->visible(fn (): bool => ! static::isSchoolActor() &&
                         (bool) (
                             auth()->user()?->hasRole(['مدير الإدارة', 'مدير المديرية'])
                             || auth()->user()?->hasPermissionTo('manage_organization')
                             || auth()->user()?->hasPermissionTo('delete_employee')
                         )
                     )
-                    ->after(function (\Illuminate\Database\Eloquent\Collection $records): void {
+                    ->after(function (Collection $records): void {
                         foreach ($records as $employee) {
                             $employee->update(['is_active' => true]);
-                            \App\Models\DeletionRequest::where('model_type', 'employee')
+                            DeletionRequest::where('model_type', 'employee')
                                 ->where('model_id', $employee->id)
                                 ->where('status', 'approved')
                                 ->update([
-                                    'status'      => 'restored',
+                                    'status' => 'restored',
                                     'admin_notes' => 'تمت استعادة الموظف من الحذف العادي',
                                 ]);
                         }
@@ -761,8 +784,8 @@ class EmployeeResource extends Resource
                                     ->schema([
                                         Infolists\Components\TextEntry::make('full_name')
                                             ->label('الاسم الكامل')
-                                            ->weight(\Filament\Support\Enums\FontWeight::Bold)
-                                            ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Large),
+                                            ->weight(FontWeight::Bold)
+                                            ->size(TextEntrySize::Large),
 
                                         Infolists\Components\TextEntry::make('employee_code')
                                             ->label('كود الموظف')
@@ -793,8 +816,7 @@ class EmployeeResource extends Resource
 
                                         Infolists\Components\TextEntry::make('entitlement_yearly_days')
                                             ->label('الإجازة الاعتيادية المستحقة')
-                                            ->state(fn (Employee $record): string =>
-                                                $record->regularLeaveEntitlement() . ' يوم / سنة'
+                                            ->state(fn (Employee $record): string => $record->regularLeaveEntitlement().' يوم / سنة'
                                             ),
 
                                         Infolists\Components\TextEntry::make('organization.name')
@@ -839,32 +861,31 @@ class EmployeeResource extends Resource
                         Infolists\Components\Tabs\Tab::make('رصيد الإجازات')
                             ->icon('heroicon-o-calculator')
                             ->schema([
-                                Infolists\Components\Section::make(fn (): string => 'رصيد السنة المالية — ' . app(\App\Services\FiscalYearService::class)->label(app(\App\Services\FiscalYearService::class)->currentFiscalYear()))
+                                Infolists\Components\Section::make(fn (): string => 'رصيد السنة المالية — '.app(FiscalYearService::class)->label(app(FiscalYearService::class)->currentFiscalYear()))
                                     ->schema([
                                         Infolists\Components\RepeatableEntry::make('currentYearBalances')
                                             ->label('')
-                                            ->state(fn (Employee $record) =>
-                                                $record->leaveBalances()
-                                                    ->with('leaveType')
-                                                    ->currentYear()
-                                                    ->get()
-                                                    ->map(fn ($b) => [
-                                                        'leave_type'         => $b->leaveType?->name ?? '—',
-                                                        'entitled'           => (int) $b->entitled,
-                                                        'used'               => (int) $b->used,
-                                                        'remaining_entitled' => (int) $b->remaining_entitled,
-                                                        'carried'            => (int) $b->carried_over,
-                                                        'used_from_carried'  => (int) $b->used_carried,
-                                                        'remaining_carried'  => (int) $b->remaining_carried,
-                                                        'total_remaining'    => (int) $b->remaining,
-                                                    ])
-                                                    ->toArray()
+                                            ->state(fn (Employee $record) => $record->leaveBalances()
+                                                ->with('leaveType')
+                                                ->currentYear()
+                                                ->get()
+                                                ->map(fn ($b) => [
+                                                    'leave_type' => $b->leaveType?->name ?? '—',
+                                                    'entitled' => (int) $b->entitled,
+                                                    'used' => (int) $b->used,
+                                                    'remaining_entitled' => (int) $b->remaining_entitled,
+                                                    'carried' => (int) $b->carried_over,
+                                                    'used_from_carried' => (int) $b->used_carried,
+                                                    'remaining_carried' => (int) $b->remaining_carried,
+                                                    'total_remaining' => (int) $b->remaining,
+                                                ])
+                                                ->toArray()
                                             )
                                             ->columns(7)
                                             ->schema([
                                                 Infolists\Components\TextEntry::make('leave_type')
                                                     ->label('نوع الإجازة')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('entitled')
                                                     ->label('مستحق السنة')
@@ -880,7 +901,7 @@ class EmployeeResource extends Resource
                                                     ->label('متبقي السنة')
                                                     ->suffix(' يوم')
                                                     ->color('success')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('carried')
                                                     ->label('إجمالي المُرحَّل')
@@ -896,7 +917,7 @@ class EmployeeResource extends Resource
                                                     ->label('متبقي المُرحَّل')
                                                     ->suffix(' يوم')
                                                     ->color('success')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
                                             ]),
                                     ]),
 
@@ -905,8 +926,7 @@ class EmployeeResource extends Resource
                                     ->schema([
                                         Infolists\Components\TextEntry::make('regular_entitlement')
                                             ->label('المستحق النظامي هذه السنة')
-                                            ->state(fn (Employee $record): string =>
-                                                $record->regularLeaveEntitlement() . ' يوم'
+                                            ->state(fn (Employee $record): string => $record->regularLeaveEntitlement().' يوم'
                                             )
                                             ->badge()
                                             ->color('primary'),
@@ -918,7 +938,8 @@ class EmployeeResource extends Resource
                                                     ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
                                                     ->currentYear()
                                                     ->first();
-                                                return ($balance ? (int) $balance->carried_over : 0) . ' يوم';
+
+                                                return ($balance ? (int) $balance->carried_over : 0).' يوم';
                                             })
                                             ->badge()
                                             ->color('info'),
@@ -930,7 +951,10 @@ class EmployeeResource extends Resource
                                                     ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
                                                     ->currentYear()
                                                     ->first();
-                                                if (! $balance) return '0 يوم';
+                                                if (! $balance) {
+                                                    return '0 يوم';
+                                                }
+
                                                 return "{$balance->used_from_carried} يوم (متبقي من المُرحَّل: {$balance->remaining_carried} يوم)";
                                             })
                                             ->badge()
@@ -943,12 +967,14 @@ class EmployeeResource extends Resource
                                                     ->whereHas('leaveType', fn ($q) => $q->where('code', 'regular'))
                                                     ->currentYear()
                                                     ->first();
-                                                if (! $balance) return 'لا يوجد رصيد مسجل';
-                                                return $balance->remaining . ' يوم';
+                                                if (! $balance) {
+                                                    return 'لا يوجد رصيد مسجل';
+                                                }
+
+                                                return $balance->remaining.' يوم';
                                             })
                                             ->badge()
-                                            ->color(fn (string $state): string =>
-                                                str_contains($state, 'لا') ? 'gray' :
+                                            ->color(fn (string $state): string => str_contains($state, 'لا') ? 'gray' :
                                                 ((int) $state > 0 ? 'success' : 'danger')
                                             ),
                                     ]),
@@ -958,21 +984,20 @@ class EmployeeResource extends Resource
                                     ->schema([
                                         Infolists\Components\RepeatableEntry::make('allYearsBalances')
                                             ->label('')
-                                            ->state(fn (Employee $record) =>
-                                                $record->leaveBalances()
-                                                    ->with('leaveType')
-                                                    ->orderByDesc('year')
-                                                    ->get()
-                                                    ->map(fn ($b) => [
-                                                        'year'              => $b->year,
-                                                        'leave_type'        => $b->leaveType?->name ?? '—',
-                                                        'entitled'          => (int) $b->entitled,
-                                                        'carried'           => (int) $b->carried_over,
-                                                        'used_from_carried' => (int) $b->used_from_carried,
-                                                        'used'              => (int) $b->used,
-                                                        'remaining'         => (int) $b->remaining,
-                                                    ])
-                                                    ->toArray()
+                                            ->state(fn (Employee $record) => $record->leaveBalances()
+                                                ->with('leaveType')
+                                                ->orderByDesc('year')
+                                                ->get()
+                                                ->map(fn ($b) => [
+                                                    'year' => $b->year,
+                                                    'leave_type' => $b->leaveType?->name ?? '—',
+                                                    'entitled' => (int) $b->entitled,
+                                                    'carried' => (int) $b->carried_over,
+                                                    'used_from_carried' => (int) $b->used_from_carried,
+                                                    'used' => (int) $b->used,
+                                                    'remaining' => (int) $b->remaining,
+                                                ])
+                                                ->toArray()
                                             )
                                             ->columns(7)
                                             ->schema([
@@ -983,7 +1008,7 @@ class EmployeeResource extends Resource
 
                                                 Infolists\Components\TextEntry::make('leave_type')
                                                     ->label('نوع الإجازة')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('entitled')
                                                     ->label('المستحق')
@@ -1009,7 +1034,7 @@ class EmployeeResource extends Resource
                                                     ->label('المتبقي')
                                                     ->suffix(' يوم')
                                                     ->color(fn ($state): string => ((int) $state) > 0 ? 'success' : 'danger')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
                                             ]),
                                     ]),
                             ]),
@@ -1022,28 +1047,27 @@ class EmployeeResource extends Resource
                             ->schema([
                                 Infolists\Components\RepeatableEntry::make('leaveRequestsList')
                                     ->label('')
-                                    ->state(fn (Employee $record) =>
-                                        $record->leaveRequests()
-                                            ->with('leaveType')
-                                            ->latest()
-                                            ->get()
-                                            ->map(fn ($req) => [
-                                                'number'     => $req->number,
-                                                'leave_type' => $req->leaveType?->name ?? '—',
-                                                'start_date' => $req->start_date?->format('d/m/Y') ?? '—',
-                                                'end_date'   => $req->end_date?->format('d/m/Y') ?? '—',
-                                                'days'       => (int) $req->days,
-                                                'status_label' => $req->status->label(),
-                                                'status_color' => $req->status->color(),
-                                            ])
-                                            ->toArray()
+                                    ->state(fn (Employee $record) => $record->leaveRequests()
+                                        ->with('leaveType')
+                                        ->latest()
+                                        ->get()
+                                        ->map(fn ($req) => [
+                                            'number' => $req->number,
+                                            'leave_type' => $req->leaveType?->name ?? '—',
+                                            'start_date' => $req->start_date?->format('d/m/Y') ?? '—',
+                                            'end_date' => $req->end_date?->format('d/m/Y') ?? '—',
+                                            'days' => (int) $req->days,
+                                            'status_label' => $req->status->label(),
+                                            'status_color' => $req->status->color(),
+                                        ])
+                                        ->toArray()
                                     )
                                     ->columns(6)
                                     ->schema([
                                         Infolists\Components\TextEntry::make('number')
                                             ->label('رقم الطلب')
-                                            ->fontFamily(\Filament\Support\Enums\FontFamily::Mono)
-                                            ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Small),
+                                            ->fontFamily(FontFamily::Mono)
+                                            ->size(TextEntrySize::Small),
 
                                         Infolists\Components\TextEntry::make('leave_type')
                                             ->label('نوع الإجازة'),
@@ -1088,7 +1112,7 @@ class EmployeeResource extends Resource
 
                                         Infolists\Components\TextEntry::make('entitlement_yearly_days')
                                             ->label('الاستحقاق السنوي الاعتيادي')
-                                            ->state(fn (Employee $record): string => $record->regularLeaveEntitlement() . ' يوم/سنة')
+                                            ->state(fn (Employee $record): string => $record->regularLeaveEntitlement().' يوم/سنة')
                                             ->badge()
                                             ->color('info'),
 
@@ -1106,25 +1130,24 @@ class EmployeeResource extends Resource
                                     ->schema([
                                         Infolists\Components\RepeatableEntry::make('promotionsList')
                                             ->label('')
-                                            ->state(fn (Employee $record) =>
-                                                $record->promotions()
-                                                    ->with(['entitlementGrade', 'creator'])
-                                                    ->get()
-                                                    ->map(fn ($p) => [
-                                                        'grade'            => $p->grade,
-                                                        'promotion_date'   => $p->promotion_date?->format('d/m/Y') ?? '—',
-                                                        'decision_number'  => $p->decision_number ?? '—',
-                                                        'duration'         => $p->duration_since_promotion_label,
-                                                        'notes'            => $p->notes ?? '—',
-                                                        'creator_name'     => $p->creator?->name ?? 'النظام',
-                                                    ])
-                                                    ->toArray()
+                                            ->state(fn (Employee $record) => $record->promotions()
+                                                ->with(['entitlementGrade', 'creator'])
+                                                ->get()
+                                                ->map(fn ($p) => [
+                                                    'grade' => $p->grade,
+                                                    'promotion_date' => $p->promotion_date?->format('d/m/Y') ?? '—',
+                                                    'decision_number' => $p->decision_number ?? '—',
+                                                    'duration' => $p->duration_since_promotion_label,
+                                                    'notes' => $p->notes ?? '—',
+                                                    'creator_name' => $p->creator?->name ?? 'النظام',
+                                                ])
+                                                ->toArray()
                                             )
                                             ->columns(6)
                                             ->schema([
                                                 Infolists\Components\TextEntry::make('grade')
                                                     ->label('الدرجة الوظيفية')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('promotion_date')
                                                     ->label('تاريخ الترقية')
@@ -1151,25 +1174,25 @@ class EmployeeResource extends Resource
                         // =====================================================
                         Infolists\Components\Tabs\Tab::make('سجل العمليات والتدقيق')
                             ->icon('heroicon-o-finger-print')
+                            ->visible(fn (): bool => SystemAudit::canViewAuditLog(auth()->user()))
                             ->schema([
                                 Infolists\Components\Section::make('كافة العمليات والتعديلات التي تمت على الموظف')
                                     ->description('سجل تدقيق كامل لكافة التعديلات على البيانات والترقيات وحركات الأرصدة')
                                     ->schema([
                                         Infolists\Components\RepeatableEntry::make('auditTrailList')
                                             ->label('')
-                                            ->state(fn (Employee $record) =>
-                                                app(\App\Services\EmployeeReportService::class)
-                                                    ->getReportData($record)['auditTrail']
+                                            ->state(fn (Employee $record) => app(EmployeeReportService::class)
+                                                ->getReportData($record)['auditTrail']
                                             )
                                             ->columns(4)
                                             ->schema([
                                                 Infolists\Components\TextEntry::make('date_label')
                                                     ->label('التاريخ والوقت')
-                                                    ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Small),
+                                                    ->size(TextEntrySize::Small),
 
                                                 Infolists\Components\TextEntry::make('description')
                                                     ->label('نوع الإجراء')
-                                                    ->weight(\Filament\Support\Enums\FontWeight::Bold),
+                                                    ->weight(FontWeight::Bold),
 
                                                 Infolists\Components\TextEntry::make('causer_name')
                                                     ->label('القائم بالإجراء')
@@ -1177,7 +1200,7 @@ class EmployeeResource extends Resource
 
                                                 Infolists\Components\TextEntry::make('details')
                                                     ->label('التفاصيل والتغييرات')
-                                                    ->size(\Filament\Infolists\Components\TextEntry\TextEntrySize::Small),
+                                                    ->size(TextEntrySize::Small),
                                             ]),
                                     ]),
                             ]),
@@ -1193,10 +1216,10 @@ class EmployeeResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'         => Pages\ListEmployees::route('/'),
-            'create'        => Pages\CreateEmployee::route('/create'),
-            'view'          => Pages\ViewEmployee::route('/{record}'),
-            'edit'          => Pages\EditEmployee::route('/{record}/edit'),
+            'index' => Pages\ListEmployees::route('/'),
+            'create' => Pages\CreateEmployee::route('/create'),
+            'view' => Pages\ViewEmployee::route('/{record}'),
+            'edit' => Pages\EditEmployee::route('/{record}/edit'),
             'leave-history' => Pages\ViewEmployeeLeaveHistory::route('/{record}/leave-history'),
         ];
     }

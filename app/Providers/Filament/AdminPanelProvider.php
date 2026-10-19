@@ -2,7 +2,20 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\Login;
+use App\Filament\Pages\Dashboard;
+use App\Filament\Resources\EmployeeResource\Pages\CreateEmployee;
+use App\Filament\Resources\LeaveRequestResource\Pages\CreateCarriedLeaveRequest;
+use App\Filament\Resources\LeaveRequestResource\Pages\CreateLeaveRequest;
+use App\Filament\Resources\OrganizationResource\Pages\CreateOrganization;
+use App\Filament\Resources\UserResource\Pages\CreateUser;
 use App\Http\Middleware\EnsurePasswordChanged;
+use App\Http\Middleware\LogUserActivity;
+use App\Http\Middleware\NormalizeArabicNumbers;
+use App\Models\Employee;
+use App\Models\LeaveRequest;
+use App\Models\Organization;
+use App\Models\User;
 use Filament\FontProviders\GoogleFontProvider;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -10,7 +23,6 @@ use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Navigation\NavigationGroup;
 use Filament\Navigation\NavigationItem;
-use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
@@ -32,7 +44,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->login(\App\Filament\Auth\Login::class)
+            ->login(Login::class)
             ->colors([
                 'primary' => Color::Blue,
             ])
@@ -51,42 +63,42 @@ class AdminPanelProvider extends PanelProvider
                     ->icon('heroicon-o-building-office-2')
                     ->group('المدارس')
                     ->sort(1)
-                    ->url(fn (): string => \App\Filament\Resources\OrganizationResource\Pages\CreateOrganization::getUrl())
+                    ->url(fn (): string => CreateOrganization::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.organizations.create'))
-                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\Organization::class)),
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', Organization::class)),
                 NavigationItem::make('إضافة مستخدم')
                     ->icon('heroicon-o-user-plus')
                     ->group('المستخدمون')
                     ->sort(1)
-                    ->url(fn (): string => \App\Filament\Resources\UserResource\Pages\CreateUser::getUrl())
+                    ->url(fn (): string => CreateUser::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.users.create'))
-                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\User::class)),
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', User::class)),
                 NavigationItem::make('طلب إجازة اعتيادية')
                     ->icon('heroicon-o-document-plus')
                     ->group('طلبات الإجازات')
                     ->sort(0)
-                    ->url(fn (): string => \App\Filament\Resources\LeaveRequestResource\Pages\CreateLeaveRequest::getUrl())
+                    ->url(fn (): string => CreateLeaveRequest::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.leave-requests.create'))
-                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\LeaveRequest::class)),
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', LeaveRequest::class)),
                 NavigationItem::make('طلب إجازة من رصيد مرحل')
                     ->icon('heroicon-o-archive-box-arrow-down')
                     ->group('طلبات الإجازات')
                     ->sort(1)
-                    ->url(fn (): string => \App\Filament\Resources\LeaveRequestResource\Pages\CreateCarriedLeaveRequest::getUrl())
+                    ->url(fn (): string => CreateCarriedLeaveRequest::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.leave-requests.create-carried'))
-                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\LeaveRequest::class)),
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', LeaveRequest::class)),
                 NavigationItem::make('إضافة موظف')
                     ->icon('heroicon-o-user-plus')
                     ->group('الموظفون')
                     ->sort(1)
-                    ->url(fn (): string => \App\Filament\Resources\EmployeeResource\Pages\CreateEmployee::getUrl())
+                    ->url(fn (): string => CreateEmployee::getUrl())
                     ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.resources.employees.create'))
-                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', \App\Models\Employee::class)),
+                    ->visible(fn (): bool => auth()->check() && auth()->user()->can('create', Employee::class)),
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
-                \App\Filament\Pages\Dashboard::class,
+                Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([
@@ -101,7 +113,7 @@ class AdminPanelProvider extends PanelProvider
                 fn (): string => Blade::render('filament.hooks.english-numerals'),
             )
             ->middleware([
-                \App\Http\Middleware\NormalizeArabicNumbers::class,
+                NormalizeArabicNumbers::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
@@ -111,6 +123,7 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+                LogUserActivity::class,
             ])
             ->authMiddleware([
                 Authenticate::class,

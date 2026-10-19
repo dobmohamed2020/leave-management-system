@@ -5,10 +5,12 @@ namespace App\Policies;
 use App\Enums\OrganizationType;
 use App\Models\LeaveRequest;
 use App\Models\User;
+use App\Policies\Concerns\ChecksOrganizationSubtree;
 use Illuminate\Auth\Access\HandlesAuthorization;
 
 class LeaveRequestPolicy
 {
+    use ChecksOrganizationSubtree;
     use HandlesAuthorization;
 
     /**
@@ -27,6 +29,10 @@ class LeaveRequestPolicy
     public function view(User $user, LeaveRequest $leaveRequest): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
 
         return $user->hasPermissionSafe('view_leave_requests')
             || $user->hasPermissionSafe('approve_leave_request');
@@ -50,6 +56,10 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
+
         if (! $user->hasPermissionSafe('edit_leave_request')) {
             return false;
         }
@@ -71,6 +81,10 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
+
         if ($user->hasPermissionSafe('manage_organization')) {
             return true;
         }
@@ -85,6 +99,10 @@ class LeaveRequestPolicy
     public function restore(User $user, LeaveRequest $leaveRequest): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
 
         if ($user->hasRole(['مدير الإدارة', 'مدير المديرية']) || $user->can('manage_organization')) {
             return true;
@@ -114,6 +132,10 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
+
         return $user->hasPermissionSafe('submit_leave_request');
     }
 
@@ -125,6 +147,10 @@ class LeaveRequestPolicy
     public function approve(User $user, LeaveRequest $leaveRequest): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
 
         if (! $user->hasPermissionSafe('approve_leave_request')) {
             return false;
@@ -157,6 +183,10 @@ class LeaveRequestPolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
+
         if (! $user->hasPermissionSafe('reject_leave_request')) {
             return false;
         }
@@ -182,6 +212,10 @@ class LeaveRequestPolicy
     public function return(User $user, LeaveRequest $leaveRequest): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
 
         if (! $user->hasPermissionSafe('return_leave_request')) {
             return false;
@@ -210,15 +244,15 @@ class LeaveRequestPolicy
      * Map stage name to the required Arabic role name for that stage.
      * Returns false for any unknown stage — fail-closed: unknown stages are denied.
      *
-     * @return string|false  role name to check, or false to deny access
+     * @return string|false role name to check, or false to deny access
      */
     private function resolveStageRole(string $stage): string|false
     {
         return match ($stage) {
             'leaves_officer' => 'مسؤول الإجازات',
-            'hr_affairs'     => 'شؤون عاملين',
-            'admin_manager'  => 'مدير الإدارة',
-            default          => false,
+            'hr_affairs' => 'شؤون عاملين',
+            'admin_manager' => 'مدير الإدارة',
+            default => false,
         };
     }
 
@@ -246,6 +280,10 @@ class LeaveRequestPolicy
     public function cancel(User $user, LeaveRequest $leaveRequest): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $leaveRequest->organization_id)) {
+            return false;
+        }
 
         return $user->hasPermissionSafe('cancel_leave_request')
             && $leaveRequest->status->canBeCancelled();

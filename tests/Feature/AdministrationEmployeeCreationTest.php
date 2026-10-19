@@ -4,8 +4,10 @@ use App\Enums\ApprovalRole;
 use App\Enums\OrganizationType;
 use App\Filament\Resources\EmployeeResource;
 use App\Models\Employee;
+use App\Models\LeaveRequest;
 use App\Models\Organization;
 use App\Models\User;
+use App\Policies\LeaveRequestPolicy;
 use Database\Seeders\EntitlementGradeSeeder;
 use Database\Seeders\LeaveTypeSeeder;
 use Database\Seeders\RoleAndPermissionSeeder;
@@ -76,6 +78,14 @@ it('provisions system user with hr_affairs role in administration and grants pan
         'is_active' => true,
     ]);
 
+    $school = Organization::create([
+        'code' => 'ARM001',
+        'name' => 'مدرسة أبو بكر الصديق الابتدائية',
+        'type' => OrganizationType::SCHOOL,
+        'parent_id' => $admin->id,
+        'is_active' => true,
+    ]);
+
     RoleAndPermissionSeeder::seedForOrganization($admin);
 
     $employee = Employee::create([
@@ -101,13 +111,14 @@ it('provisions system user with hr_affairs role in administration and grants pan
     expect($user->hasRole('شؤون عاملين'))->toBeTrue();
 
     // Verify canAccessPanel returns true for HR Affairs
-    $panel = \Mockery::mock(Panel::class);
+    $panel = Mockery::mock(Panel::class);
     expect($user->canAccessPanel($panel))->toBeTrue();
 
     // Verify user can take action on hr_affairs stage
-    $leaveRequest = new \App\Models\LeaveRequest();
+    $leaveRequest = new LeaveRequest;
+    $leaveRequest->organization_id = $school->id;
     $leaveRequest->current_stage = 'hr_affairs';
 
-    $policy = new \App\Policies\LeaveRequestPolicy();
+    $policy = new LeaveRequestPolicy;
     expect($policy->approve($user, $leaveRequest))->toBeTrue();
 });

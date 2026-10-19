@@ -6,10 +6,12 @@ use App\Enums\OrganizationType;
 use App\Enums\StepStatus;
 use App\Models\Employee;
 use App\Models\EntitlementGrade;
+use App\Models\LeaveBalance;
 use App\Models\LeaveRequest;
 use App\Models\Organization;
 use App\Support\ArabicPdf;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Log;
 use Picqer\Barcode\BarcodeGeneratorPNG;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
@@ -54,35 +56,35 @@ class LeaveRequestPdfService
         // Live balance from DB (more accurate than the snapshot stored on the request)
         $liveBalance = null;
         if ($employee && $request->leaveType) {
-            $liveBalance = \App\Models\LeaveBalance::where('employee_id', $employee->id)
+            $liveBalance = LeaveBalance::where('employee_id', $employee->id)
                 ->where('leave_type_id', $request->leaveType->id)
                 ->where('year', $request->start_date?->year ?? now()->year)
                 ->first();
         }
 
-        $liveEntitled   = $liveBalance?->entitled  ?? $request->balance_entitled;
-        $liveUsed       = $liveBalance?->used       ?? $request->balance_used;
-        $liveRemaining  = $liveBalance
-            ? max(0, (int)$liveBalance->entitled + (int)$liveBalance->carried_over - (int)$liveBalance->used)
+        $liveEntitled = $liveBalance?->entitled ?? $request->balance_entitled;
+        $liveUsed = $liveBalance?->used ?? $request->balance_used;
+        $liveRemaining = $liveBalance
+            ? max(0, (int) $liveBalance->entitled + (int) $liveBalance->carried_over - (int) $liveBalance->used)
             : $request->balance_remaining;
 
         return [
-            'leaveRequest'     => $request,
-            'directorate'      => $hierarchy['directorate'],
-            'administration'   => $hierarchy['administration'],
-            'school'           => $hierarchy['school'],
-            'barcode'          => $this->generateBarcode($request->number),
-            'qrCode'           => $this->generateQrCode($request->number),
-            'daysInWords'      => $this->daysToArabicWords((int) $request->days),
-            'approvalRows'     => $this->buildApprovalRows($request),
-            'printedAt'        => now(),
-            'leaveTypeShort'   => $leaveTypeShort,
-            'employeeGrade'    => $gradeLabel,
-            'substituteName'   => $substitute?->full_name,
-            'showCasualNote'   => $showCasualNote,
-            'liveEntitled'     => $liveEntitled,
-            'liveUsed'         => $liveUsed,
-            'liveRemaining'    => $liveRemaining,
+            'leaveRequest' => $request,
+            'directorate' => $hierarchy['directorate'],
+            'administration' => $hierarchy['administration'],
+            'school' => $hierarchy['school'],
+            'barcode' => $this->generateBarcode($request->number),
+            'qrCode' => $this->generateQrCode($request),
+            'daysInWords' => $this->daysToArabicWords((int) $request->days),
+            'approvalRows' => $this->buildApprovalRows($request),
+            'printedAt' => now(),
+            'leaveTypeShort' => $leaveTypeShort,
+            'employeeGrade' => $gradeLabel,
+            'substituteName' => $substitute?->full_name,
+            'showCasualNote' => $showCasualNote,
+            'liveEntitled' => $liveEntitled,
+            'liveUsed' => $liveUsed,
+            'liveRemaining' => $liveRemaining,
         ];
     }
 
@@ -161,31 +163,37 @@ class LeaveRequestPdfService
             // Code128 accepts ASCII only — map Arabic prefix to EG for the barcode payload.
             $barcodeValue = preg_replace('/^إج-/', 'EG-', $number) ?? $number;
 
-            $generator = new BarcodeGeneratorPNG();
+            $generator = new BarcodeGeneratorPNG;
             $png = $generator->getBarcode($barcodeValue, $generator::TYPE_CODE_128, 2, 50);
 
             return 'data:image/png;base64,'.base64_encode($png);
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('[LeaveRequestPdfService] Barcode generation failed.', [
+            Log::warning('[LeaveRequestPdfService] Barcode generation failed.', [
                 'number' => $number,
-                'error'  => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
 
             return '';
         }
     }
 
-    private function generateQrCode(string $number): string
+    private function generateQrCode(LeaveRequest $request): string
     {
+        $token = $request->verification_token;
+
+        if (empty($token)) {
+            return '';
+        }
+
         try {
             return QrCode::format('svg')
                 ->size(70)
                 ->margin(0)
-                ->generate(route('leave.verify', ['number' => $number]));
+                ->generate(route('leave.verify', ['token' => $token]));
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('[LeaveRequestPdfService] QR code generation failed.', [
-                'number' => $number,
-                'error'  => $e->getMessage(),
+            Log::warning('[LeaveRequestPdfService] QR code generation failed.', [
+                'number' => $request->number,
+                'error' => $e->getMessage(),
             ]);
 
             return '';
@@ -199,9 +207,9 @@ class LeaveRequestPdfService
     {
         $defaults = [
             'school_principal' => 'مدير المدرسة (توقيع إلكتروني)',
-            'leaves_officer'   => 'مسؤول الإجازات',
-            'hr_affairs'       => 'شؤون عاملين',
-            'admin_manager'    => 'مدير الإدارة',
+            'leaves_officer' => 'مسؤول الإجازات',
+            'hr_affairs' => 'شؤون عاملين',
+            'admin_manager' => 'مدير الإدارة',
         ];
 
         $rows = [];
@@ -213,11 +221,11 @@ class LeaveRequestPdfService
             $actorName = $step?->actedBy?->name ?? '';
 
             $rows[] = [
-                'label'     => $label,
-                'name'      => $actorName,
-                'date'      => $step?->acted_at?->format('Y/m/d') ?? '',
-                'note'      => $step?->note ?? '',
-                'signed'    => $signed,
+                'label' => $label,
+                'name' => $actorName,
+                'date' => $step?->acted_at?->format('Y/m/d') ?? '',
+                'note' => $step?->note ?? '',
+                'signed' => $signed,
                 'signature' => $signed ? $actorName : '',
             ];
         }

@@ -1,7 +1,18 @@
 <?php
 
+use App\Exports\LeaveRequestsExport;
 use App\Http\Controllers\LeaveVerificationController;
+use App\Models\Employee;
+use App\Models\LeaveRequest;
+use App\Models\Organization;
+use App\Services\CredentialsPdfService;
+use App\Services\EmployeeReportService;
+use App\Services\LeaveRequestPdfService;
+use App\Services\ReportPdfService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
+use Maatwebsite\Excel\Facades\Excel;
 
 Route::get('/', function () {
     return redirect('/admin');
@@ -14,27 +25,33 @@ Route::get('/login', function () {
 // Render / load balancer health check
 Route::get('/healthz', fn () => response('ok', 200));
 
-// Public verification page (no auth required)
-Route::get('/verify/{number}', [LeaveVerificationController::class, 'show'])
-    ->name('leave.verify');
+// Public verification (rate-limited; token-based QR links)
+Route::middleware('throttle:30,1')->group(function () {
+    Route::get('/verify/{token}', [LeaveVerificationController::class, 'showByToken'])
+        ->where('token', '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+        ->name('leave.verify');
+
+    Route::get('/verify/legacy/{number}', [LeaveVerificationController::class, 'showLegacyByNumber'])
+        ->name('leave.verify.legacy');
+});
 
 // Authenticated PDF download route
 Route::get('/leave-pdf/{number}', function (string $number) {
-    $leaveRequest = \App\Models\LeaveRequest::withoutGlobalScopes()
+    $leaveRequest = LeaveRequest::withoutGlobalScopes()
         ->where('number', $number)
         ->firstOrFail();
 
     // Enforce per-record authorization — only users with 'view' permission on this record
-    \Illuminate\Support\Facades\Gate::authorize('view', $leaveRequest);
+    Gate::authorize('view', $leaveRequest);
 
     app()->setLocale('ar');
 
-    $service = app(\App\Services\LeaveRequestPdfService::class);
+    $service = app(LeaveRequestPdfService::class);
     $content = $service->generate($leaveRequest);
     $filename = $service->downloadFilename($leaveRequest);
 
     return response()->streamDownload(
-        fn () => print($content),
+        fn () => print ($content),
         $filename,
         [
             'Content-Type' => 'application/pdf',
@@ -45,15 +62,15 @@ Route::get('/leave-pdf/{number}', function (string $number) {
 
 // Authenticated print-friendly HTML page (native Arabic rendering)
 Route::get('/leave-print/{number}', function (string $number) {
-    $leaveRequest = \App\Models\LeaveRequest::withoutGlobalScopes()
+    $leaveRequest = LeaveRequest::withoutGlobalScopes()
         ->where('number', $number)
         ->firstOrFail();
 
-    \Illuminate\Support\Facades\Gate::authorize('view', $leaveRequest);
+    Gate::authorize('view', $leaveRequest);
 
     app()->setLocale('ar');
 
-    $data = app(\App\Services\LeaveRequestPdfService::class)->viewData($leaveRequest);
+    $data = app(LeaveRequestPdfService::class)->viewData($leaveRequest);
 
     return response()
         ->view('print.leave-request', $data)
@@ -68,7 +85,7 @@ Route::get('/employee-report/{id}', function (int $id) {
     }
     $user->setOrganizationTeam();
 
-    $employee = \App\Models\Employee::withoutGlobalScopes()->findOrFail($id);
+    $employee = Employee::withoutGlobalScopes()->findOrFail($id);
 
     // Enforce org scope authorization
     if ($user->organization) {
@@ -80,7 +97,7 @@ Route::get('/employee-report/{id}', function (int $id) {
 
     app()->setLocale('ar');
 
-    $data = app(\App\Services\EmployeeReportService::class)->getReportData($employee);
+    $data = app(EmployeeReportService::class)->getReportData($employee);
 
     return response()
         ->view('print.employee-report', $data)
@@ -88,10 +105,10 @@ Route::get('/employee-report/{id}', function (int $id) {
 })->middleware('auth')->name('employee.report.print');
 
 // Authenticated Excel export route
-Route::get('/leave-export', function (\Illuminate\Http\Request $request) {
+Route::get('/leave-export', function (Request $request) {
     $user = auth()->user();
     $user->setOrganizationTeam();
-    \Illuminate\Support\Facades\Gate::authorize('export_reports');
+    Gate::authorize('export_reports');
 
     $filters = $request->only(['status', 'organization_id', 'employee_name', 'leave_type_id']);
 
@@ -106,17 +123,17 @@ Route::get('/leave-export', function (\Illuminate\Http\Request $request) {
         abort(403, 'غير مصرح لك بتصدير البيانات.');
     }
 
-    return \Maatwebsite\Excel\Facades\Excel::download(
-        new \App\Exports\LeaveRequestsExport($filters),
+    return Excel::download(
+        new LeaveRequestsExport($filters),
         'leave-requests.xlsx'
     );
 })->middleware('auth')->name('leave.export');
 
 // Authenticated report PDF download route
-Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
+Route::get('/report-pdf', function (Request $request) {
     $user = auth()->user();
     $user->setOrganizationTeam();
-    \Illuminate\Support\Facades\Gate::authorize('view_reports');
+    Gate::authorize('view_reports');
 
     $filters = $request->only(['status', 'organization_id', 'leave_type_id', 'from', 'to']);
 
@@ -128,8 +145,8 @@ Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
 
         if ($userOrg) {
             // Build the set of org IDs the user is allowed to see (own org + subtree).
-            $allowedIds = \App\Models\Organization::withoutGlobalScopes()
-                ->where('path', 'like', $userOrg->path . '%')
+            $allowedIds = Organization::withoutGlobalScopes()
+                ->where('path', 'like', $userOrg->path.'%')
                 ->pluck('id')
                 ->all();
 
@@ -142,9 +159,10 @@ Route::get('/report-pdf', function (\Illuminate\Http\Request $request) {
         }
     }
 
-    $content = app(\App\Services\ReportPdfService::class)->generateSummary($filters);
+    $content = app(ReportPdfService::class)->generateSummary($filters);
+
     return response()->streamDownload(
-        fn () => print($content),
+        fn () => print ($content),
         'report.pdf',
         ['Content-Type' => 'application/pdf']
     );
@@ -168,11 +186,10 @@ Route::get('/credentials-pdf', function () {
         abort(403, 'غير مصرح لك بتحميل هذا الملف. متاح فقط لمدير الإدارة ومدير النظام.');
     }
 
-    $content = app(\App\Services\CredentialsPdfService::class)->generate();
+    $content = app(CredentialsPdfService::class)->generate();
 
     return response($content, 200, [
         'Content-Type' => 'application/pdf',
         'Content-Disposition' => 'inline; filename="armant-credentials.pdf"',
     ]);
 })->middleware('auth')->name('credentials.pdf');
-

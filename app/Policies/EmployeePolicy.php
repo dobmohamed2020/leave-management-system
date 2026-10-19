@@ -4,10 +4,12 @@ namespace App\Policies;
 
 use App\Models\Employee;
 use App\Models\User;
+use App\Policies\Concerns\ChecksOrganizationSubtree;
 use Illuminate\Auth\Access\HandlesAuthorization;
 
 class EmployeePolicy
 {
+    use ChecksOrganizationSubtree;
     use HandlesAuthorization;
 
     /**
@@ -26,6 +28,10 @@ class EmployeePolicy
     public function view(User $user, Employee $employee): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $employee->organization_id)) {
+            return false;
+        }
 
         return $user->hasPermissionSafe('view_employees');
     }
@@ -47,6 +53,10 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $employee->organization_id)) {
+            return false;
+        }
+
         return $user->hasPermissionSafe('edit_employee');
     }
 
@@ -57,6 +67,10 @@ class EmployeePolicy
     {
         $user->setOrganizationTeam();
 
+        if (! $this->userCanAccessOrganization($user, (int) $employee->organization_id)) {
+            return false;
+        }
+
         return $user->hasPermissionSafe('delete_employee');
     }
 
@@ -66,6 +80,10 @@ class EmployeePolicy
     public function restore(User $user, Employee $employee): bool
     {
         $user->setOrganizationTeam();
+
+        if (! $this->userCanAccessOrganization($user, (int) $employee->organization_id)) {
+            return false;
+        }
 
         if ($user->hasRole(['مدير الإدارة', 'مدير المديرية']) || $user->can('manage_organization')) {
             return true;

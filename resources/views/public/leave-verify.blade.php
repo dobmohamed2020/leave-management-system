@@ -125,12 +125,6 @@
         </table>
     </div>
 
-    @if($request->status === \App\Enums\LeaveStatus::REJECTED && $request->rejection_reason)
-        <div class="rejection-note">
-            <strong>سبب الرفض:</strong> {{ $request->rejection_reason }}
-        </div>
-    @endif
-
     <p class="footer-note">
         نظام إدارة الإجازات — وزارة التربية والتعليم
     </p>

@@ -3,6 +3,7 @@
 namespace App\Filament\Auth;
 
 use App\Models\User;
+use App\Services\AuditLogService;
 use DanHarrin\LivewireRateLimiting\Exceptions\TooManyRequestsException;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Component;
@@ -62,6 +63,10 @@ class Login extends BaseLogin
         Filament::auth()->login($user, (bool) ($data['remember'] ?? false));
 
         session()->regenerate();
+
+        app(AuditLogService::class)->recordAuth('تسجيل دخول إلى لوحة الإدارة', [
+            'ip' => request()->ip(),
+        ], $user);
 
         return app(LoginResponse::class);
     }

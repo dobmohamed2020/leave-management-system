@@ -1,6 +1,5 @@
 <?php
 
-use App\Enums\ApprovalRule;
 use App\Enums\EntitlementGrade;
 use App\Enums\LeaveStatus;
 use App\Enums\StepStatus;
@@ -10,11 +9,10 @@ use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\LeaveBalance;
 use App\Models\LeaveRequest;
-use App\Models\LeaveRequestStep;
 use App\Models\LeaveType;
-use App\Models\Organization;
 use App\Models\User;
 use App\Models\WorkflowConfiguration;
+use App\Notifications\Channels\DatabaseChannel;
 use App\Notifications\LeaveRequestNotification;
 use App\Rules\Leave\CasualBeforeRegularRule;
 use App\Rules\Leave\MaxDaysPerRequestRule;
@@ -23,6 +21,7 @@ use App\Rules\Leave\SufficientBalanceRule;
 use App\Rules\Leave\WorkingDaysRule;
 use App\Services\LeaveBalanceService;
 use App\Services\LeaveRequestService;
+use Database\Seeders\EntitlementGradeSeeder;
 use Illuminate\Support\Facades\Notification;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
@@ -38,12 +37,12 @@ use Spatie\Permission\PermissionRegistrar;
  */
 function setupPhase2(): array
 {
-    test()->seed(\Database\Seeders\EntitlementGradeSeeder::class);
+    test()->seed(EntitlementGradeSeeder::class);
 
     $orgs = createHierarchy();
 
     $regular = LeaveType::factory()->regular()->create();
-    $casual  = LeaveType::factory()->casual()->create();
+    $casual = LeaveType::factory()->casual()->create();
 
     $employee = Employee::factory()
         ->inOrganization($orgs['school'])
@@ -67,8 +66,8 @@ function setupPhase2(): array
     setPermissionsTeamId($orgs['school']->id);
     foreach (['مدير مدرسة', 'مسؤول الإجازات', 'مدير الإدارة'] as $roleName) {
         $role = Role::firstOrCreate([
-            'name'            => $roleName,
-            'guard_name'      => 'web',
+            'name' => $roleName,
+            'guard_name' => 'web',
             'organization_id' => $orgs['school']->id,
         ]);
         $role->syncPermissions($workflowPerms);
@@ -78,21 +77,21 @@ function setupPhase2(): array
 
     // Balances
     LeaveBalance::create([
-        'employee_id'   => $employee->id,
+        'employee_id' => $employee->id,
         'leave_type_id' => $regular->id,
-        'year'          => now()->year,
-        'entitled'      => 30,
-        'carried_over'  => 0,
-        'used'          => 0,
+        'year' => now()->year,
+        'entitled' => 30,
+        'carried_over' => 0,
+        'used' => 0,
     ]);
 
     LeaveBalance::create([
-        'employee_id'   => $employee->id,
+        'employee_id' => $employee->id,
         'leave_type_id' => $casual->id,
-        'year'          => now()->year,
-        'entitled'      => 7,
-        'carried_over'  => 0,
-        'used'          => 0,
+        'year' => now()->year,
+        'entitled' => 7,
+        'carried_over' => 0,
+        'used' => 0,
     ]);
 
     // 3-stage workflow for this school
@@ -111,8 +110,8 @@ describe('LeaveBalanceService', function () {
 
     it('getOrCreateBalance creates a balance with grade-based entitlement for regular leave', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()
             ->inOrganization($orgs['school'])
             ->withGrade(EntitlementGrade::TEACHER_EXPERT) // 40 days
             ->create(['birth_date' => now()->subYears(35)]);
@@ -126,8 +125,8 @@ describe('LeaveBalanceService', function () {
 
     it('getOrCreateBalance returns existing record on second call', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
         $service = app(LeaveBalanceService::class);
         $b1 = $service->getOrCreateBalance($emp, $lt, now()->year);
@@ -139,13 +138,13 @@ describe('LeaveBalanceService', function () {
 
     it('deduct increments used and appends a deduction transaction', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
-        $req  = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
+        $req = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
             'leave_type_id' => $lt->id,
-            'days'          => 5,
-            'created_by'    => $user->id,
+            'days' => 5,
+            'created_by' => $user->id,
         ]);
 
         $service = app(LeaveBalanceService::class);
@@ -160,19 +159,19 @@ describe('LeaveBalanceService', function () {
 
     it('refund decrements used and appends a refund transaction', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
-        $req  = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
+        $req = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
             'leave_type_id' => $lt->id,
-            'days'          => 5,
-            'created_by'    => $user->id,
+            'days' => 5,
+            'created_by' => $user->id,
         ]);
 
         $service = app(LeaveBalanceService::class);
         $balance = LeaveBalance::factory()->forEmployee($emp)->forLeaveType($lt)->create([
             'entitled' => 30,
-            'used'     => 10,
+            'used' => 10,
         ]);
 
         $service->refund($balance, 5, $req, $user);
@@ -184,19 +183,19 @@ describe('LeaveBalanceService', function () {
 
     it('refund floors used at zero even if days exceed used', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
-        $req  = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
+        $req = LeaveRequest::factory()->forEmployee($emp)->approved()->create([
             'leave_type_id' => $lt->id,
-            'days'          => 20,
-            'created_by'    => $user->id,
+            'days' => 20,
+            'created_by' => $user->id,
         ]);
 
         $service = app(LeaveBalanceService::class);
         $balance = LeaveBalance::factory()->forEmployee($emp)->forLeaveType($lt)->create([
             'entitled' => 30,
-            'used'     => 3, // less than refund amount
+            'used' => 3, // less than refund amount
         ]);
 
         $service->refund($balance, 20, $req, $user);
@@ -207,14 +206,14 @@ describe('LeaveBalanceService', function () {
 
     it('adjust with positive days increments entitled', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
 
         $service = app(LeaveBalanceService::class);
         $balance = LeaveBalance::factory()->forEmployee($emp)->forLeaveType($lt)->create([
             'entitled' => 30,
-            'used'     => 0,
+            'used' => 0,
         ]);
 
         $service->adjust($balance, 5, 'تعديل إداري', $user);
@@ -226,14 +225,14 @@ describe('LeaveBalanceService', function () {
 
     it('adjust with negative days decrements used', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
 
         $service = app(LeaveBalanceService::class);
         $balance = LeaveBalance::factory()->forEmployee($emp)->forLeaveType($lt)->create([
             'entitled' => 30,
-            'used'     => 10,
+            'used' => 10,
         ]);
 
         $service->adjust($balance, -3, 'تصحيح', $user);
@@ -244,16 +243,16 @@ describe('LeaveBalanceService', function () {
 
     it('carryOver moves remaining days to next year balance', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
         $balance = LeaveBalance::create([
-            'employee_id'   => $emp->id,
+            'employee_id' => $emp->id,
             'leave_type_id' => $lt->id,
-            'year'          => 2025,
-            'entitled'      => 30,
-            'carried_over'  => 0,
-            'used'          => 20,  // remaining = 10
+            'year' => 2025,
+            'entitled' => 30,
+            'carried_over' => 0,
+            'used' => 20,  // remaining = 10
         ]);
 
         $service = app(LeaveBalanceService::class);
@@ -271,9 +270,9 @@ describe('LeaveBalanceService', function () {
     it('accrueAnnual sets entitled on all active leave types with entitlement', function () {
         $orgs = createHierarchy();
         $regular = LeaveType::factory()->regular()->create();
-        $casual  = LeaveType::factory()->casual()->create();
+        $casual = LeaveType::factory()->casual()->create();
         // sick has yearly_entitlement=180 but deducts_balance=false — still gets accrued
-        $sick    = LeaveType::factory()->sick()->create();
+        $sick = LeaveType::factory()->sick()->create();
 
         $emp = Employee::factory()
             ->inOrganization($orgs['school'])
@@ -300,12 +299,12 @@ describe('Validation Rules', function () {
     describe('WorkingDaysRule', function () {
 
         it('counts all calendar days inclusive (weekends included)', function () {
-            $rule = new WorkingDaysRule();
+            $rule = new WorkingDaysRule;
             $rule->setData([
                 'start_date' => '2026-06-01',
-                'end_date'   => '2026-06-07',
+                'end_date' => '2026-06-07',
             ]);
-            $rule->validate('days', 7, fn($msg) => null);
+            $rule->validate('days', 7, fn ($msg) => null);
 
             expect($rule->calculatedDays)->toBe(7);
         });
@@ -313,23 +312,23 @@ describe('Validation Rules', function () {
         it('does not subtract holidays from calendar-day count', function () {
             Holiday::create(['date' => '2026-06-03', 'name' => 'إجازة رسمية']);
 
-            $rule = new WorkingDaysRule();
+            $rule = new WorkingDaysRule;
             $rule->setData([
                 'start_date' => '2026-06-01',
-                'end_date'   => '2026-06-07',
+                'end_date' => '2026-06-07',
             ]);
-            $rule->validate('days', 7, fn($msg) => null);
+            $rule->validate('days', 7, fn ($msg) => null);
 
             expect($rule->calculatedDays)->toBe(7);
         });
 
         it('returns correct count for a single working day', function () {
-            $rule = new WorkingDaysRule();
+            $rule = new WorkingDaysRule;
             $rule->setData([
                 'start_date' => '2026-06-01', // Monday
-                'end_date'   => '2026-06-01',
+                'end_date' => '2026-06-01',
             ]);
-            $rule->validate('days', 1, fn($msg) => null);
+            $rule->validate('days', 1, fn ($msg) => null);
 
             expect($rule->calculatedDays)->toBe(1);
         });
@@ -341,16 +340,16 @@ describe('Validation Rules', function () {
             config(['leave.warn_only_insufficient_balance' => true]);
 
             $orgs = createHierarchy();
-            $lt   = LeaveType::factory()->regular()->create();
-            $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+            $lt = LeaveType::factory()->regular()->create();
+            $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             LeaveBalance::create([
-                'employee_id'   => $emp->id,
+                'employee_id' => $emp->id,
                 'leave_type_id' => $lt->id,
-                'year'          => now()->year,
-                'entitled'      => 5,
-                'carried_over'  => 0,
-                'used'          => 0,
+                'year' => now()->year,
+                'entitled' => 5,
+                'carried_over' => 0,
+                'used' => 0,
             ]);
 
             $failed = false;
@@ -368,16 +367,16 @@ describe('Validation Rules', function () {
             config(['leave.warn_only_insufficient_balance' => false]);
 
             $orgs = createHierarchy();
-            $lt   = LeaveType::factory()->regular()->create();
-            $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+            $lt = LeaveType::factory()->regular()->create();
+            $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             LeaveBalance::create([
-                'employee_id'   => $emp->id,
+                'employee_id' => $emp->id,
                 'leave_type_id' => $lt->id,
-                'year'          => now()->year,
-                'entitled'      => 5,
-                'carried_over'  => 0,
-                'used'          => 0,
+                'year' => now()->year,
+                'entitled' => 5,
+                'carried_over' => 0,
+                'used' => 0,
             ]);
 
             $failed = false;
@@ -394,12 +393,12 @@ describe('Validation Rules', function () {
 
         it('passes when balance is sufficient', function () {
             $orgs = createHierarchy();
-            $lt   = LeaveType::factory()->regular()->create();
-            $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+            $lt = LeaveType::factory()->regular()->create();
+            $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             LeaveBalance::factory()->forEmployee($emp)->forLeaveType($lt)->create([
                 'entitled' => 30,
-                'used'     => 5,
+                'used' => 5,
             ]);
 
             $failed = false;
@@ -417,16 +416,16 @@ describe('Validation Rules', function () {
 
         it('fails when overlapping submitted request exists', function () {
             $orgs = createHierarchy();
-            $lt   = LeaveType::factory()->regular()->create();
-            $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+            $lt = LeaveType::factory()->regular()->create();
+            $emp = Employee::factory()->inOrganization($orgs['school'])->create();
             $user = User::factory()->inOrganization($orgs['school'])->create();
 
             LeaveRequest::factory()->forEmployee($emp)->submitted()->create([
                 'leave_type_id' => $lt->id,
-                'start_date'    => '2026-07-01',
-                'end_date'      => '2026-07-10',
-                'days'          => 8,
-                'created_by'    => $user->id,
+                'start_date' => '2026-07-01',
+                'end_date' => '2026-07-10',
+                'days' => 8,
+                'created_by' => $user->id,
             ]);
 
             $failed = false;
@@ -441,16 +440,16 @@ describe('Validation Rules', function () {
 
         it('passes when only rejected requests overlap', function () {
             $orgs = createHierarchy();
-            $lt   = LeaveType::factory()->regular()->create();
-            $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+            $lt = LeaveType::factory()->regular()->create();
+            $emp = Employee::factory()->inOrganization($orgs['school'])->create();
             $user = User::factory()->inOrganization($orgs['school'])->create();
 
             LeaveRequest::factory()->forEmployee($emp)->rejected()->create([
                 'leave_type_id' => $lt->id,
-                'start_date'    => '2026-08-01',
-                'end_date'      => '2026-08-10',
-                'days'          => 8,
-                'created_by'    => $user->id,
+                'start_date' => '2026-08-01',
+                'end_date' => '2026-08-10',
+                'days' => 8,
+                'created_by' => $user->id,
             ]);
 
             $failed = false;
@@ -498,20 +497,20 @@ describe('Validation Rules', function () {
 
             $orgs = createHierarchy();
             $regular = LeaveType::factory()->regular()->create();
-            $casual  = LeaveType::factory()->casual()->create();
+            $casual = LeaveType::factory()->casual()->create();
             $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             LeaveBalance::create([
-                'employee_id'   => $emp->id,
+                'employee_id' => $emp->id,
                 'leave_type_id' => $casual->id,
-                'year'          => now()->year,
-                'entitled'      => 7,
-                'carried_over'  => 0,
-                'used'          => 0,
+                'year' => now()->year,
+                'entitled' => 7,
+                'carried_over' => 0,
+                'used' => 0,
             ]);
 
             $rule = new CasualBeforeRegularRule($emp, $regular, now()->year);
-            $rule->validate('days', 1, fn($msg) => null);
+            $rule->validate('days', 1, fn ($msg) => null);
 
             expect($rule->warning)->not->toBeNull();
             expect($rule->warning)->toContain('عارضة');
@@ -523,7 +522,7 @@ describe('Validation Rules', function () {
             $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             $rule = new CasualBeforeRegularRule($emp, $regular, now()->year);
-            $rule->validate('days', 3, fn($msg) => null);
+            $rule->validate('days', 3, fn ($msg) => null);
 
             expect($rule->warning)->toBeNull();
         });
@@ -531,20 +530,20 @@ describe('Validation Rules', function () {
         it('does not warn when casual balance is zero', function () {
             $orgs = createHierarchy();
             $regular = LeaveType::factory()->regular()->create();
-            $casual  = LeaveType::factory()->casual()->create();
+            $casual = LeaveType::factory()->casual()->create();
             $emp = Employee::factory()->inOrganization($orgs['school'])->create();
 
             LeaveBalance::create([
-                'employee_id'   => $emp->id,
+                'employee_id' => $emp->id,
                 'leave_type_id' => $casual->id,
-                'year'          => now()->year,
-                'entitled'      => 7,
-                'carried_over'  => 0,
-                'used'          => 7, // exhausted
+                'year' => now()->year,
+                'entitled' => 7,
+                'carried_over' => 0,
+                'used' => 7, // exhausted
             ]);
 
             $rule = new CasualBeforeRegularRule($emp, $regular, now()->year);
-            $rule->validate('days', 1, fn($msg) => null);
+            $rule->validate('days', 1, fn ($msg) => null);
 
             expect($rule->warning)->toBeNull();
         });
@@ -561,17 +560,17 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
 
         $service = app(LeaveRequestService::class);
-        $result  = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(4)->toDateString(),
-            'end_date'      => now()->addDays(6)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(4)->toDateString(),
+            'end_date' => now()->addDays(6)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
-        expect($result->request)->toBeInstanceOf(\App\Models\LeaveRequest::class);
+        expect($result->request)->toBeInstanceOf(LeaveRequest::class);
         expect($result->request->status)->toBe(LeaveStatus::DRAFT);
         expect($result->request->employee_id)->toBe($ctx['employee']->id);
     });
@@ -581,14 +580,14 @@ describe('LeaveRequestService lifecycle', function () {
 
         // Week Mon–Sun: 5 working days (excludes Fri+Sat)
         $service = app(LeaveRequestService::class);
-        $result  = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->next('Monday')->toDateString(),
-            'end_date'      => now()->next('Monday')->addDays(6)->toDateString(),
-            'days'          => 99,            // wrong — should be corrected to 5
+            'start_date' => now()->next('Monday')->toDateString(),
+            'end_date' => now()->next('Monday')->addDays(6)->toDateString(),
+            'days' => 99,            // wrong — should be corrected to 5
         ], $ctx['user']);
 
         expect((float) $result->request->days)->toBe(7.0);
@@ -598,14 +597,14 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
         $service = app(LeaveRequestService::class);
 
-        $result  = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(8)->toDateString(),
-            'end_date'      => now()->addDays(10)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(8)->toDateString(),
+            'end_date' => now()->addDays(10)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
         $submitted = $service->submit($result->request, $ctx['user']);
@@ -619,14 +618,14 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
         $service = app(LeaveRequestService::class);
 
-        $result    = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(3)->toDateString(),
-            'end_date'      => now()->addDays(5)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(3)->toDateString(),
+            'end_date' => now()->addDays(5)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
         $submitted = $service->submit($result->request, $ctx['user']);
@@ -641,19 +640,19 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
         $service = app(LeaveRequestService::class);
 
-        $result    = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-11-01',
-            'end_date'      => '2026-11-03',
-            'days'          => 3,
+            'start_date' => '2026-11-01',
+            'end_date' => '2026-11-03',
+            'days' => 3,
         ], $ctx['user']);
 
         $submitted = $service->submit($result->request, $ctx['user']);
 
-        expect(fn() => $service->submit($submitted, $ctx['user']))
+        expect(fn () => $service->submit($submitted, $ctx['user']))
             ->toThrow(LeaveRequestException::class);
     });
 
@@ -661,14 +660,14 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
         $service = app(LeaveRequestService::class);
 
-        $result    = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-11-10',
-            'end_date'      => '2026-11-12',
-            'days'          => 3,
+            'start_date' => '2026-11-10',
+            'end_date' => '2026-11-12',
+            'days' => 3,
         ], $ctx['user']);
 
         $submitted = $service->submit($result->request, $ctx['user']);
@@ -688,28 +687,28 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-12-01',
-            'end_date'      => '2026-12-03',
-            'days'          => 3,
+            'start_date' => '2026-12-01',
+            'end_date' => '2026-12-03',
+            'days' => 3,
         ], $ctx['user']);
 
         $req = $service->submit($result->request, $ctx['user']);
 
         // Stage 1: direct_manager
         $step1 = $req->steps()->where('stage', 'direct_manager')->first();
-        $req   = $service->approve($req, $step1, $ctx['user']);
+        $req = $service->approve($req, $step1, $ctx['user']);
 
         // Stage 2: leaves_officer
         $step2 = $req->steps()->where('stage', 'leaves_officer')->first();
-        $req   = $service->approve($req, $step2, $ctx['user']);
+        $req = $service->approve($req, $step2, $ctx['user']);
 
         // Stage 3: admin_manager (final)
         $step3 = $req->steps()->where('stage', 'admin_manager')->first();
-        $req   = $service->approve($req, $step3, $ctx['user']);
+        $req = $service->approve($req, $step3, $ctx['user']);
 
         expect($req->status)->toBe(LeaveStatus::APPROVED);
 
@@ -725,17 +724,17 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(10)->toDateString(),
-            'end_date'      => now()->addDays(12)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(10)->toDateString(),
+            'end_date' => now()->addDays(12)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
-        $req    = $service->submit($result->request, $ctx['user']);
-        $step1  = $req->steps()->where('stage', 'direct_manager')->first();
+        $req = $service->submit($result->request, $ctx['user']);
+        $step1 = $req->steps()->where('stage', 'direct_manager')->first();
 
         $rejected = $service->reject($req, $step1, $ctx['user'], 'يوجد ضغط عمل في هذه الفترة');
 
@@ -752,19 +751,19 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(15)->toDateString(),
-            'end_date'      => now()->addDays(17)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(15)->toDateString(),
+            'end_date' => now()->addDays(17)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
-        $req   = $service->submit($result->request, $ctx['user']);
+        $req = $service->submit($result->request, $ctx['user']);
         $step1 = $req->steps()->where('stage', 'direct_manager')->first();
 
-        expect(fn() => $service->reject($req, $step1, $ctx['user'], '   '))
+        expect(fn () => $service->reject($req, $step1, $ctx['user'], '   '))
             ->toThrow(LeaveRequestException::class);
     });
 
@@ -773,17 +772,17 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => now()->addDays(20)->toDateString(),
-            'end_date'      => now()->addDays(22)->toDateString(),
-            'days'          => 3,
+            'start_date' => now()->addDays(20)->toDateString(),
+            'end_date' => now()->addDays(22)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
-        $req    = $service->submit($result->request, $ctx['user']);
-        $step1  = $req->steps()->where('stage', 'direct_manager')->first();
+        $req = $service->submit($result->request, $ctx['user']);
+        $step1 = $req->steps()->where('stage', 'direct_manager')->first();
 
         $returned = $service->returnRequest($req, $step1, $ctx['user'], 'يرجى إرفاق المستندات');
 
@@ -798,18 +797,18 @@ describe('LeaveRequestService lifecycle', function () {
         $ctx = setupPhase2();
         $service = app(LeaveRequestService::class);
 
-        $result  = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+        $result = $service->create([
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-10-15',
-            'end_date'      => '2026-10-17',
-            'days'          => 3,
+            'start_date' => now()->addDays(20)->toDateString(),
+            'end_date' => now()->addDays(22)->toDateString(),
+            'days' => 3,
         ], $ctx['user']);
 
-        $req     = $service->submit($result->request, $ctx['user']);
-        $step1   = $req->steps()->where('stage', 'direct_manager')->first();
+        $req = $service->submit($result->request, $ctx['user']);
+        $step1 = $req->steps()->where('stage', 'direct_manager')->first();
         $returned = $service->returnRequest($req, $step1, $ctx['user'], 'ناقص مستند');
 
         // Re-submit
@@ -824,13 +823,13 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-11-05',
-            'end_date'      => '2026-11-07',
-            'days'          => 3,
+            'start_date' => '2026-11-05',
+            'end_date' => '2026-11-07',
+            'days' => 3,
         ], $ctx['user']);
 
         $cancelled = $service->cancel($result->request, $ctx['user']);
@@ -853,13 +852,13 @@ describe('LeaveRequestService lifecycle', function () {
         $service = app(LeaveRequestService::class);
 
         $result = $service->create([
-            'employee_id'   => $ctx['employee']->id,
+            'employee_id' => $ctx['employee']->id,
             'substitute_employee_id' => $ctx['substitute']->id,
-            'reason'             => 'ظرف عائلي للاختبار',
+            'reason' => 'ظرف عائلي للاختبار',
             'leave_type_id' => $ctx['regular']->id,
-            'start_date'    => '2026-11-17',
-            'end_date'      => '2026-11-19',
-            'days'          => 3,
+            'start_date' => '2026-11-17',
+            'end_date' => '2026-11-19',
+            'days' => 3,
         ], $ctx['user']);
 
         $req = $service->submit($result->request, $ctx['user']);
@@ -867,7 +866,7 @@ describe('LeaveRequestService lifecycle', function () {
         // Approve all 3 stages
         foreach (['direct_manager', 'leaves_officer', 'admin_manager'] as $stage) {
             $step = $req->steps()->where('stage', $stage)->first();
-            $req  = $service->approve($req, $step, $ctx['user']);
+            $req = $service->approve($req, $step, $ctx['user']);
         }
 
         expect($req->status)->toBe(LeaveStatus::APPROVED);
@@ -897,13 +896,13 @@ describe('Notifications', function () {
 
     it('toDatabase returns expected array shape', function () {
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
 
         $request = LeaveRequest::factory()->forEmployee($emp)->submitted()->create([
             'leave_type_id' => $lt->id,
-            'created_by'    => $user->id,
+            'created_by' => $user->id,
         ]);
 
         $notification = new LeaveRequestNotification($request, 'submitted', 'طلب جديد');
@@ -924,18 +923,18 @@ describe('Notifications', function () {
         Notification::fake();
 
         $orgs = createHierarchy();
-        $lt   = LeaveType::factory()->regular()->create();
-        $emp  = Employee::factory()->inOrganization($orgs['school'])->create();
+        $lt = LeaveType::factory()->regular()->create();
+        $emp = Employee::factory()->inOrganization($orgs['school'])->create();
         $user = User::factory()->inOrganization($orgs['school'])->create();
 
         $request = LeaveRequest::factory()->forEmployee($emp)->submitted()->create([
             'leave_type_id' => $lt->id,
-            'created_by'    => $user->id,
+            'created_by' => $user->id,
         ]);
 
         $notification = new LeaveRequestNotification($request, 'approved', 'تمت الموافقة');
 
-        $channel = new \App\Notifications\Channels\DatabaseChannel();
+        $channel = new DatabaseChannel;
         $channel->send($user, $notification);
 
         Notification::assertSentTo($user, LeaveRequestNotification::class);
